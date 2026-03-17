@@ -2,13 +2,20 @@ import {Router} from "express";
 import {getLogger} from "log4js";
 
 const router = Router();
-const logger = getLogger('/');
+const logger = getLogger("/");
 
 /*=======router======*/
-// path: /
-router.get('/', (req: any, res) => {
+// path: /classroom/*
+router.use("/classroom", require("./classroom"));
+logger.info("Loaded /classroom");
 
-    res.status(200).json({code: 200, message: 'OK!'});
+// path: /course/*
+router.use("/course", require("./course"));
+logger.info("Loaded /course");
+
+// path: /
+router.get("/", (req, res) => {
+    res.status(200).json({code: 200, message: "This is home page! Use '/course' or '/classroom'"});
 });
 
 module.exports = router;
