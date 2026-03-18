@@ -10,7 +10,7 @@ export let DB: Database;
 export async function openDB() {
     try {
         DB = await open({
-            filename: '/tmp/database.db',
+            filename: 'database.db',
             driver: sqlite3.Database
         });
         logger.info('SQLite database opened.');

@@ -5,6 +5,7 @@ import figlet from 'figlet';
 import {connectRedis, disconnectRedis} from './redis_service';
 import * as http from "node:http";
 import {openDB, closeDB} from "./sql_service";
+import {restoreRedis} from "./redis_restore";
 
 const app: Application = express();
 const logger = log4js.getLogger('server');
@@ -54,6 +55,7 @@ let server: http.Server;
 (async () => {
     await connectRedis();
     await openDB();
+    await restoreRedis();
 
     // Start HTTP server
     server = app.listen(PORT, HOST, () => {
