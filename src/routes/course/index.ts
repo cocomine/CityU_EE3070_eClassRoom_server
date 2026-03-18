@@ -7,7 +7,7 @@ import {DB} from "../../sql_service";
 const router = Router();
 const logger = getLogger("/course");
 
-export interface PostCourseRequest {
+export interface PostCourseBody {
     name?: string;
 }
 
@@ -31,7 +31,7 @@ router.get("/", async (req, res) => {
 
 // path: /course
 // POST: create course
-router.post("/", async (req: Request<null, any, PostCourseRequest>, res) => {
+router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res) => {
     let name = req.body?.name;
 
     // Check required fields
@@ -39,7 +39,7 @@ router.post("/", async (req: Request<null, any, PostCourseRequest>, res) => {
         return res.status(400).json({code: 400, message: "Course name is required"});
     }
 
-    name = xss(name); // xss clean
+    name = xss(name).trim(); // xss clean
     const courseId = crypto.randomUUID(); // Gen UUID
 
     try {
