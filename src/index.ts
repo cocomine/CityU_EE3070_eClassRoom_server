@@ -60,7 +60,7 @@ let server: http.Server;
 
     // Start HTTP server
     server = app.listen(PORT, HOST, () => {
-        figlet.text("EE3070 Server", {
+        figlet.text("EE3070 API", {
             font: "ANSI Shadow",
             horizontalLayout: "full",
             verticalLayout: "full",

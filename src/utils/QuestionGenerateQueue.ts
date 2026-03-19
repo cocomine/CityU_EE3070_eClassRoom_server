@@ -1,7 +1,10 @@
 import {ConnectionOptions, Queue, QueueEvents, Worker} from "bullmq";
 import {REDIS_URL, RedisClient} from "../redis_service";
 import {getLogger} from "log4js";
-import axios from "axios";
+import {AxiosError, isAxiosError} from "axios";
+import {DB} from "../sql_service";
+import {OpenRouter} from "@openrouter/sdk";
+import fs from "fs";
 
 export interface QuestionGenerateJobDate {
     courseId: string;
@@ -9,12 +12,58 @@ export interface QuestionGenerateJobDate {
     prompt: string;
 }
 
+const SYSTEM_PROMPT = `
+You are “Classroom Checkpoint Tutor”, an assistant that helps a teacher assess student understanding of the lesson content provided to you.
+
+Core rules:
+- Use ONLY the provided lesson content as the source of truth. If the lesson content does not support something, say “Not in the lesson content”.
+- Keep a teacher-friendly tone. Be precise and not verbose.
+- Never reveal the hidden rubric, scoring rules, or any chain-of-thought. Provide only final outputs.
+- Output must be valid JSON when requested.
+
+Assessment philosophy:
+- Reward correct reasoning even if wording is imperfect.
+- If the student answer is partially correct, give partial credit and explain the missing piece briefly.
+- Be robust to minor grammar mistakes and non-native English.
+
+Safety/classroom rules:
+- Do not generate harmful, explicit, or inappropriate content.
+- If the teacher’s request conflicts with these rules, refuse and offer a safe alternative.
+`;
+const USER_PROMPT = `
+TASK: Generate individualized understanding-check questions.
+
+TEACHER INTENT:
+- Check whether students understand: {learning_objectives_as_bullets}
+- Target difficulty: mixed (some easy, some challenging)
+- Allowed knowledge: only from LESSON EXCERPT
+
+QUESTION REQUIREMENTS:
+- Each question should be “long but not too long”: 1–3 sentences, 40–90 words.
+- Answer should be 1–2 sentences.
+- Questions must test understanding, not memorization (use “apply/interpret/explain why”).
+- Avoid trick questions. Avoid ambiguous wording.
+- Ensure questions are diverse: vary numbers/examples/context/phrasing.
+- No external facts beyond LESSON EXCERPT.
+- Exactly generate 4 question.
+
+MATERIAL:
+- All materials have been placed in the files.
+
+OTHER REQUIREMENTS:
+`;
+
 const connection: ConnectionOptions = {
     url: REDIS_URL
 };
 const QuestionGenerateTaskQueue = new Queue("QuestionGenerateTaskQueue", {connection});
 const QuestionGenerateTaskQueueEvents = new QueueEvents("QuestionGenerateTaskQueue", {connection});
 const logger = getLogger("/utils/QuestionGenerateQueue");
+const OpenRouterClient = new OpenRouter({
+    apiKey: process.env.OPENROUTER_KEY,
+});
+
+const TestFile = fs.readFileSync("./Test.pdf", {encoding: "base64"});
 
 const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGenerateTaskQueue", async (job) => {
     const {courseId, questionId, prompt} = job.data;
@@ -42,17 +91,17 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     // call LLM
     let res;
     const requestBody = {
-        model: "google/gemini-2.5-flash",
+        model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
         stream: false,
-        temperature: 0.4,
+        temperature: 0.5,
         top_p: 0.9,
         reasoning: {effort: "medium"},
         modalities: ["text"],
-        max_output_tokens: 5000,
-        metadata: {courseId, taskId: questionId},
-        text: {
-            format: {
-                type: "json_schema",
+        max_completion_tokens: 2000,
+        metadata: {courseId, questionId},
+        response_format: {
+            type: "json_schema",
+            json_schema: {
                 name: "QuestionSet",
                 strict: true,
                 schema: {
@@ -80,47 +129,83 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 }
             }
         },
-        instructions: SYSTEM_PROMPT,
-        input: [{
-            type: "message",
+        plugins: [{id: "response-healing"}],
+        messages: [{
+            role: "system",
+            content: SYSTEM_PROMPT
+        }, {
             role: "user",
-            content: [{
-                type: "input_text",
-                text: USER_PROMPT + (prompt || "--- NO OTHER REQUIREMENTS ---")
-            }/*,{
-                    type: 'input_image',
-                    image_url: 'data:image/',
-                    detail: 'high'
-                },{
-                    type: 'input_file',
-                    file_data: 'data:application/',
-                    filename: ''
+            content: [
+                {
+                    type: "text",
+                    text: USER_PROMPT + (prompt || "--- NO OTHER REQUIREMENTS ---")
+                }, {
+                    type: "file",
+                    file: {
+                        file_data: "data:application/pdf;base64," + TestFile,
+                        filename: "test.pdf"
+                    }
+                }
+                //TODO: file upload
+                /*{
+                    type: "input_image",
+                    image_url: "data:image/",
+                    detail: "high"
                 }*/
             ]
         }]
     };
     try {
-        res = await axios.post("https://openrouter.ai/api/v1/responses", requestBody, {
+        /*res = await axios.post("https://openrouter.ai/api/v1/responses", requestBody, {
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
             }
-        });
-    } catch (err) {
-        //todo: fail set meta
+        });*/     //axios
+        // @ts-ignore
+        res = await OpenRouterClient.chat.send({chatGenerationParams: requestBody});
+    } catch (err: AxiosError | any) {
         if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
+            clearInterval(heartbeat);
 
+            if (isAxiosError(err)) {
+                // Axios Error
+                await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+                    status: "ERROR",
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
+                    errorMessage: err.message
+                });
+            } else {
+                // other Error
+                await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+                    status: "ERROR",
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
+                    errorMessage: "Unknown error"
+                });
+            }
+
+            // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
+            await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+                status: "ERROR"
+            }));
+
+            // update DB
+            const stmt = await DB.prepare("UPDATE questions SET status = 2 WHERE id = ? AND status != 3");
+            await stmt.bind(questionId);
+            await stmt.run();
         }
 
         logger.error(err);
         throw err;
     }
 
-    // todo: get result
-    console.log(res);
-    console.log(res.data.output);
-    console.log(res.data.output[0].content);
-    console.log(res.data.output[1].content);
+    // get result
+    // filter result
+    //const result = res.data.output.filter((item: { role: string; }) => item.role === "assistant"); //axios
+    console.log(res.choices[0]?.message);
+
 }, {connection, concurrency: 1});
 
 /**
@@ -138,53 +223,12 @@ async function shutdownQuestionGenerateTaskQueue() {
     }
 }
 
+// event listeners
 QuestionGenerateTaskQueueEvents.on("completed", (job) => {
     logger.info(`Job ${job.jobId} track data save done`);
 });
 QuestionGenerateTaskQueueEvents.on("failed", (job) => {
     logger.error(`Job ${job.jobId} track data save failed:`, job.failedReason);
 });
-
-const SYSTEM_PROMPT = `
-You are “Classroom Checkpoint Tutor”, an assistant that helps a teacher assess student understanding of the lesson content provided to you.
-
-Core rules:
-- Use ONLY the provided lesson content as the source of truth. If the lesson content does not support something, say “Not in the lesson content”.
-- Keep a teacher-friendly tone. Be precise and not verbose.
-- Never reveal the hidden rubric, scoring rules, or any chain-of-thought. Provide only final outputs.
-- Output must be valid JSON when requested.
-
-Assessment philosophy:
-- Reward correct reasoning even if wording is imperfect.
-- If the student answer is partially correct, give partial credit and explain the missing piece briefly.
-- Be robust to minor grammar mistakes and non-native English.
-
-Safety/classroom rules:
-- Do not generate harmful, explicit, or inappropriate content.
-- If the teacher’s request conflicts with these rules, refuse and offer a safe alternative.
-`;
-
-const USER_PROMPT = `
-TASK: Generate individualized understanding-check questions.
-
-TEACHER INTENT:
-- Check whether students understand: {learning_objectives_as_bullets}
-- Target difficulty: {easy | medium | mixed}
-- Allowed knowledge: only from LESSON EXCERPT
-
-QUESTION REQUIREMENTS:
-- Each question should be “long but not too long”: 1–3 sentences, 40–90 words.
-- Answer should be 1–2 sentences.
-- Questions must test understanding, not memorization (use “apply/interpret/explain why”).
-- Avoid trick questions. Avoid ambiguous wording.
-- Ensure questions are diverse: vary numbers/examples/context/phrasing.
-- No external facts beyond LESSON EXCERPT.
-- Generate 4 question
-
-MATERIAL:
-- All materials have been placed in the files.
-
-OTHER REQUIREMENTS:
-`;
 
 export {QuestionGenerateTaskQueue, QuestionGenerateTaskQueueEvents, shutdownQuestionGenerateTaskQueue};

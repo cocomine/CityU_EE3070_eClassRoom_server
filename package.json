@@ -15,13 +15,13 @@
     "whenFileExists": "overwrite"
   },
   "dependencies": {
+      "@openrouter/sdk": "^0.9.11",
     "axios": "^1.13.6",
     "bullmq": "^5.71.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "figlet": "^1.11.0",
     "log4js": "^6.9.1",
-    "openai": "^6.29.0",
     "redis": "^5.11.0",
     "sqlite": "^5.1.1",
     "sqlite3": "5.1.6",

@@ -56,9 +56,8 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         });
     }
 
-    const questionId = crypto.randomUUID();
-
     // new task
+    const questionId = crypto.randomUUID();
     await RedisClient.set("idem:task:" + clientTaskId, questionId, {EX: 86400, NX: true}); //set for Idempotency
     const title = prompt ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
@@ -69,8 +68,8 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         questionId,
         status: "PENDING",
         createAt: new Date().toISOString(),
-        startAt: NaN,
-        finishedAt: NaN,
+        startAt: "",
+        finishedAt: "",
         errorMessage: ""
     });
     await RedisClient.sAdd("course:" + courseId + ":question", questionId);
