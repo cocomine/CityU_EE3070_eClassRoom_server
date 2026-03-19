@@ -20,7 +20,7 @@ export interface PostQuestionRequest extends CourseRequest {
 router.use("/:questionId", require("./[questionId]"));
 
 // path: /course/[courseId]/question
-// GET: list question (complete generate)
+// GET: list question
 router.get("/", (req: CourseRequest, res) => {
     // todo
     console.debug(req.params.courseId);
@@ -48,41 +48,39 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     const idem = await RedisClient.get("idem:task:" + clientTaskId);
     if (idem) {
         // already have task
-        return res.json({
-            code: 200,
+        return res.status(202).json({
+            code: 202,
             message: "Request already receive", data: {
-                taskId: idem,
-                questionId: idem,
-                statusStreamUrl: `/task/${idem}/stream`,
-                resultUrl: `/task/${idem}/result`,
+                questionId: idem
             }
         });
     }
 
-    const taskId = crypto.randomUUID();
+    const questionId = crypto.randomUUID();
 
     // new task
-    await RedisClient.set("idem:task:" + clientTaskId, taskId, {EX: 86400, NX: true}); //set for Idempotency
-    const title = prompt ? prompt.slice(0, 100) : "New Question (" + taskId.slice(0, 8) + ")";
+    await RedisClient.set("idem:task:" + clientTaskId, questionId, {EX: 86400, NX: true}); //set for Idempotency
+    const title = prompt ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
     // save meta
-    await RedisClient.hSet("task:" + taskId + ":meta", {
+    await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
         courseId,
         title,
-        questionId: taskId,
+        questionId,
         status: "PENDING",
-        createAt: Date.now(),
+        createAt: new Date().toISOString(),
         startAt: NaN,
         finishedAt: NaN,
         errorMessage: ""
     });
-    await RedisClient.set("course:" + courseId + ":activeTask", taskId); //save activeTask ID
+    await RedisClient.sAdd("course:" + courseId + ":question", questionId);
 
     // save database
     try {
-        const stmt = await DB.prepare(`INSERT INTO questions (id, title)
-                                       VALUES (?, ?)`);
-        await stmt.bind(taskId, title);
+        const stmt = await DB.prepare(
+            `INSERT INTO questions (id, courseID, title, prompt)
+             VALUES (?, ?, ?, ?)`);
+        await stmt.bind(questionId, courseId, title, prompt);
         await stmt.run();
     } catch (err) {
         logger.error(err);
@@ -90,21 +88,26 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // Immediately response to client
-    res.json({
-        code: 200,
+    res.status(201).json({
+        code: 201,
         message: "Question generate request enqueued.",
         data: {
-            taskId,
+            questionId,
             title,
-            questionId: taskId,
             status: "PENDING",
-            statusStreamUrl: `/task/${taskId}/stream`,
-            resultUrl: `/task/${taskId}/result`,
         }
     });
 
     // Enqueue Job
-    await QuestionGenerateTaskQueue.add("QuestionGenerateTask", {taskId, courseId, prompt});
+    await QuestionGenerateTaskQueue.add("QuestionGenerateTask", {questionId, courseId, prompt}, {
+        removeOnComplete: true,
+        removeOnFail: true,
+        attempts: 5,
+        backoff: {
+            type: "fixed",
+            delay: 1000,
+        }
+    });
 });
 
 module.exports = router;

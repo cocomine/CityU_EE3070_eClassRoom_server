@@ -13,10 +13,6 @@ logger.info("Loaded /classroom");
 router.use("/course", require("./course"));
 logger.info("Loaded /course");
 
-// path: /task/*
-router.use("/task", require("./task"));
-logger.info("Loaded /task");
-
 // path: /
 router.get("/", (req, res) => {
     res.status(200).json({code: 200, message: "This is home page! Use '/course' or '/classroom'"});
