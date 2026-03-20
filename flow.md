@@ -145,7 +145,7 @@ Worker 組 prompt：
 
 ---
 
-## SSE Handler（狀態串流）做法
+## SSE Handler（狀態串流）做法 OK
 
 ### 10) Client 連 SSE：`GET /v1/tasks/:taskId/status/stream`
 
