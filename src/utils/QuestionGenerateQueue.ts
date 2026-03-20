@@ -1,17 +1,93 @@
 import {ConnectionOptions, Queue, QueueEvents, Worker} from "bullmq";
 import {REDIS_URL, RedisClient} from "../redis_service";
 import {getLogger} from "log4js";
-import {AxiosError, isAxiosError} from "axios";
+import axios, {AxiosError} from "axios";
 import {DB} from "../sql_service";
-import {OpenRouter} from "@openrouter/sdk";
 import fs from "fs";
+import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
 
+/**
+ * QuestionGenerateJobDate defines the data structure for a job in the question generation queue. Each job contains:
+ - courseId: The ID of the course for which questions are being generated.
+ - questionId: A unique ID for the question generation task.
+ - prompt: An optional string that may contain additional instructions or context for question generation.
+ */
 export interface QuestionGenerateJobDate {
     courseId: string;
     questionId: string;
     prompt: string;
 }
 
+interface GeneratedQuestionSet {
+    question: string[];
+    title: string;
+}
+
+/* ===== OpenRouterChatCompletionResponse Type ===== */
+interface OpenRouterChatCompletionResponse {
+    id: string;
+    object: "chat.completion";
+    created: number;
+    model: string;
+    provider?: string;
+    system_fingerprint?: string | null;
+    choices: OpenRouterChoice[];
+    usage: OpenRouterUsage | null;
+}
+
+interface OpenRouterChoice {
+    index: number;
+    logprobs: unknown | null;
+    finish_reason: "tool_calls" | "stop" | "length" | "content_filter" | "error" | string;
+    native_finish_reason?: string | null;
+    message: OpenRouterMessage;
+}
+
+interface OpenRouterMessage {
+    role: "assistant";
+    content: string | null;
+    refusal: string | null;
+    reasoning: string | null;
+    reasoning_details?: (OpenRouterReasoningTextDetail | OpenRouterReasoningSummaryDetail | OpenRouterReasoningEncryptedDetail)[] | null;
+}
+
+interface OpenRouterReasoningTextDetail {
+    type: "reasoning.text";
+    text: string | null;
+    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
+    index: number | null;
+}
+
+interface OpenRouterReasoningSummaryDetail {
+    type: "reasoning.summary";
+    summary: string;
+    id: string | null;
+    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
+    index: number | null;
+}
+
+interface OpenRouterReasoningEncryptedDetail {
+    type: "reasoning.encrypted";
+    data: string;
+    id: string | null;
+    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
+    index: number | null;
+}
+
+interface OpenRouterUsage {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost?: number;
+    is_byok?: boolean;
+    prompt_tokens_details?: Record<string, number>;
+    cost_details?: Record<string, number>;
+    completion_tokens_details?: Record<string, number>;
+}
+
+/* ===== penRouterChatCompletionResponse Type End ===== */
+
+/* ==== Prompt === */
 const SYSTEM_PROMPT = `
 You are “Classroom Checkpoint Tutor”, an assistant that helps a teacher assess student understanding of the lesson content provided to you.
 
@@ -59,15 +135,15 @@ const connection: ConnectionOptions = {
 const QuestionGenerateTaskQueue = new Queue("QuestionGenerateTaskQueue", {connection});
 const QuestionGenerateTaskQueueEvents = new QueueEvents("QuestionGenerateTaskQueue", {connection});
 const logger = getLogger("/utils/QuestionGenerateQueue");
-const OpenRouterClient = new OpenRouter({
-    apiKey: process.env.OPENROUTER_KEY,
-});
 
 const TestFile = fs.readFileSync("./Test.pdf", {encoding: "base64"});
 
+/**
+ * GenerateTaskQueueWorker processes jobs from the "QuestionGenerateTaskQueue".
+ */
 const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGenerateTaskQueue", async (job) => {
     const {courseId, questionId, prompt} = job.data;
-    logger.info(`Processing question generate task. courseId: ${courseId}, taskId: ${questionId}, prompt: ${prompt}`);
+    logger.info(`Processing question generate task. courseId: ${courseId}, taskId: ${questionId}, prompt: ${prompt}, attempt: ${job.attemptsStarted}`);
 
     // update status
     await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
@@ -89,7 +165,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     }, 3000);
 
     // call LLM
-    let res;
+    let result: GeneratedQuestionSet;
     const requestBody = {
         model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
         stream: false,
@@ -156,35 +232,73 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         }]
     };
     try {
-        /*res = await axios.post("https://openrouter.ai/api/v1/responses", requestBody, {
+        const res = await axios.post<OpenRouterChatCompletionResponse>("https://openrouter.ai/api/v1/chat/completions", requestBody, {
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
             }
-        });*/     //axios
-        // @ts-ignore
-        res = await OpenRouterClient.chat.send({chatGenerationParams: requestBody});
-    } catch (err: AxiosError | any) {
-        if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
-            clearInterval(heartbeat);
+        });
 
-            if (isAxiosError(err)) {
-                // Axios Error
-                await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
-                    status: "ERROR",
-                    updateAt: new Date().toISOString(),
-                    finishedAt: new Date().toISOString(),
-                    errorMessage: err.message
-                });
-            } else {
-                // other Error
-                await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
-                    status: "ERROR",
-                    updateAt: new Date().toISOString(),
-                    finishedAt: new Date().toISOString(),
-                    errorMessage: "Unknown error"
-                });
-            }
+        // check status is "CANCELLED"
+        const status = await RedisClient.hGet("course:" + courseId + ":question:" + questionId + ":meta", "status");
+        if (status === "CANCELLED") {
+            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
+            return;
+        }
+
+        // filter result
+        const choice = res.data.choices.find(choice => choice.message.role === "assistant");
+        const content = choice?.message?.content;
+        if (typeof content !== "string") {
+            throw new Error("OpenRouter response is missing choices.message.content");
+        }
+        if (choice?.finish_reason === "error") {
+            throw new Error("OpenRouter response error: " + content);
+        }
+        if (choice?.finish_reason === "content_filter") {
+            throw new Error("OpenRouter response is filtered by content filter: " + content);
+        }
+
+        // get result
+        result = JSON.parse(content);
+
+        // save result
+        const multi = RedisClient.multi();
+        for (let item of result.question) {
+            multi.lPush("course:" + courseId + ":question:" + questionId + ":result", item);
+        }
+        await multi.exec();
+
+        // save database
+        if (result.question.length > 0) {
+            const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
+            const params = result.question.flatMap((question, index) => [questionId, index, question]);
+            await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
+                          VALUES ${placeholders}`, params);
+        }
+        await DB.run(`UPDATE questions
+                      SET status = 1
+                      WHERE ID = ?`, questionId);
+    } catch (err: AxiosError | Error | any) {
+        // if status is "CANCELLED"
+        const status = await RedisClient.hGet("course:" + courseId + ":question:" + questionId + ":meta", "status");
+        if (status === "CANCELLED") {
+            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
+            return;
+        }
+
+        // if attempts >= 5
+        if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
+            // update status
+            await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
+                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                arguments: ["GENERATING", "ERROR"],
+            });
+            await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+                updateAt: new Date().toISOString(),
+                finishedAt: new Date().toISOString(),
+                errorMessage: err.message
+            });
 
             // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
             await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
@@ -195,17 +309,39 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             const stmt = await DB.prepare("UPDATE questions SET status = 2 WHERE id = ? AND status != 3");
             await stmt.bind(questionId);
             await stmt.run();
+        } else {
+            // attempts < 5
+            await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
+                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                arguments: ["GENERATING", "PENDING"],
+            });
+
+            // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
+            await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+                status: "PENDING"
+            }));
         }
 
         logger.error(err);
         throw err;
+    } finally {
+        clearInterval(heartbeat);
     }
 
-    // get result
-    // filter result
-    //const result = res.data.output.filter((item: { role: string; }) => item.role === "assistant"); //axios
-    console.log(res.choices[0]?.message);
+    // update status
+    await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
+        keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+        arguments: ["GENERATING", "DONE"],
+    });
+    await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+        updateAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+    });
 
+    // pub/sub: publish status to channel
+    await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+        status: "DONE"
+    }));
 }, {connection, concurrency: 1});
 
 /**

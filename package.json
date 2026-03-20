@@ -15,7 +15,6 @@
     "whenFileExists": "overwrite"
   },
   "dependencies": {
-      "@openrouter/sdk": "^0.9.11",
     "axios": "^1.13.6",
     "bullmq": "^5.71.0",
     "dotenv": "^17.3.1",

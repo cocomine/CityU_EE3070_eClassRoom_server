@@ -8,6 +8,20 @@ questions → status: 0 = PENDING, 1 = DONE, 2 = ERROR, 3 = CANCELLED, 4 = STALE
 
 PENDING, GENERATING, DONE, ERROR, CANCELLED, STALE
 
+# Redis Lua Script
+
+```lua
+-- KEYS[1] = task:{taskId}:meta (hash)
+-- ARGV[1] = expected current status (e.g. "GENERATING")
+-- ARGV[2] = next status (e.g. "DONE")
+local cur = redis.call("HGET", KEYS[1], "status")
+if cur == ARGV[1] then
+  redis.call("HSET", KEYS[1], "status", ARGV[2])
+  return 1
+end
+return 0
+```
+
 # LLM Response
 
 ```json

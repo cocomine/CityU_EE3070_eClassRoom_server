@@ -4,6 +4,7 @@ import {CourseRequest} from "../index";
 import {RedisClient} from "../../../../redis_service";
 import {QuestionGenerateTaskQueue} from "../../../../utils/QuestionGenerateQueue";
 import {DB} from "../../../../sql_service";
+import {SET_IDEM_LUA_SCRIPT} from "../../../../utils/LuaScript";
 
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question");
@@ -45,7 +46,11 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // Idempotency
-    const idem = await RedisClient.get("idem:task:" + clientTaskId);
+    const questionId = crypto.randomUUID();
+    const idem = await RedisClient.eval(SET_IDEM_LUA_SCRIPT, {
+        keys: ["idem:task:" + clientTaskId],
+        arguments: [questionId]
+    });
     if (idem) {
         // already have task
         return res.status(202).json({
@@ -57,16 +62,16 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // new task
-    const questionId = crypto.randomUUID();
-    await RedisClient.set("idem:task:" + clientTaskId, questionId, {EX: 86400, NX: true}); //set for Idempotency
     const title = prompt ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
     // save meta
     await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
         courseId,
         title,
+        prompt: prompt || "",
         questionId,
         status: "PENDING",
+        visibility: 0, // default private
         createAt: new Date().toISOString(),
         startAt: "",
         finishedAt: "",

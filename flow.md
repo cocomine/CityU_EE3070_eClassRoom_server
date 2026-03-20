@@ -97,7 +97,7 @@ Worker 取到 job 後：
 
 ---
 
-### 7) 呼叫 LLM（非串流，一次性等待完成）
+### 7) 呼叫 LLM（非串流，一次性等待完成） OK
 
 Worker 組 prompt：
 
@@ -111,7 +111,7 @@ Worker 組 prompt：
 
 ---
 
-### 8) 成功完成 → 儲存結果 → 狀態 DONE
+### 8) 成功完成 → 儲存結果 → 狀態 DONE OK
 
 如果成功拿到最終 question：
 
@@ -135,7 +135,7 @@ Worker 組 prompt：
 
 ---
 
-### 9) 失敗 → 狀態 ERROR
+### 9) 失敗 → 狀態 ERROR OK
 
 如果 API 失敗/timeout：
 
@@ -169,6 +169,11 @@ SSE endpoint 建議行為：
     * `res.end()`
 
 > 斷線重連：Client 重新連 SSE 即可；因為你會「連線即推當前狀態」，所以不需要 lastEventId。
+
+4. 如果 meta 係 GENERATING，但：
+
+* task:{taskId}:hb 唔存在（過期）或 timestamp 太舊
+* → 判定 STALE，回傳 STALE，同時（可選）把 meta 寫成 STALE。
 
 ---
 
