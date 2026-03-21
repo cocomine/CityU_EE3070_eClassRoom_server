@@ -3,6 +3,8 @@ import {getLogger} from "log4js";
 import {CourseRequest} from "../../index";
 import {RedisClient} from "../../../../../redis_service";
 import {SET_STATUS_LUA_SCRIPT} from "../../../../../utils/LuaScript";
+import {QuestionGenerateTaskQueue} from "../../../../../utils/QuestionGenerateQueue";
+import {DB} from "../../../../../sql_service";
 
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question/[questionId]");
@@ -13,6 +15,31 @@ interface CourseQuestionRequest extends CourseRequest {
         questionId: string;
     };
 }
+
+interface PutCourseQuestionRequest extends CourseQuestionRequest {
+    body: {
+        visibility?: "public" | "private";
+    };
+}
+
+/*======middleware======*/
+router.use(async (req: CourseQuestionRequest, res, next) => {
+    const {courseId, questionId} = req.params;
+
+    // check courseId format match UUID format
+    if (!questionId || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(questionId)) {
+        return res.status(400).json({code: 400, message: "Invalid course ID format"});
+    }
+
+    // get form redis
+    const course = await RedisClient.sIsMember("course:" + courseId + ":question", questionId);
+    if (course === 0) {
+        return res.status(404).json({code: 404, message: `No question found in course ${courseId}.`});
+    }
+
+    next();
+});
+
 
 /*=======router======*/
 // path: /course/[courseId]/question/[questionId]
@@ -58,14 +85,60 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
 
 // path: /course/[courseId]/question/[questionId]
 // PUT: update question visibility (private/public) return 200
-//      If task is not finished yet, return 409 Conflict with current status (meta).
-router.put("/", (req: CourseQuestionRequest, res) => {
-    // todo
-    console.debug(req.params.courseId, req.params.questionId);
-    res.status(200).json({
-        code: 200,
-        message: "This is course " + req.params.courseId + " question " + req.params.questionId + " put!"
-    });
+//      If task is not DONE yet, return 409 Conflict with current status (meta).
+router.put("/", async (req: PutCourseQuestionRequest, res) => {
+    const {courseId, questionId} = req.params;
+    const {visibility} = req.body;
+    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+
+    // verify
+    if (!visibility) {
+        return res.status(400).json({code: 400, message: "Missing visibility field."});
+    }
+
+    // check status
+    const status = await RedisClient.hGet(metaKey, "status");
+    if (!status) {
+        return res.status(404).json({
+            code: 404,
+            message: `Question ${questionId} not found in course ${courseId}.`
+        });
+    }
+    if (status !== "DONE") {
+        return res.status(200).json({
+            code: 410,
+            message: `Question ${questionId} is ${status}.`,
+            data: {
+                status
+            }
+        });
+    }
+
+    if (visibility === "public") {
+        // make public
+        await RedisClient.hSet(metaKey, {visibility});
+        res.json({code: 200, message: `Question ${questionId} is Public.`, data: {visibility}});
+
+        try {
+            await DB.run("UPDATE questions SET visibility = 1 WHERE ID = ? AND visibility = 0;", [questionId]);
+        } catch (error) {
+            logger.error(error);
+        }
+        return;
+    } else if (visibility === "private") {
+        // make private
+        await RedisClient.hSet(metaKey, {visibility});
+        res.json({code: 200, message: `Question ${questionId} is Public.`, data: {visibility}});
+
+        try {
+            await DB.run("UPDATE questions SET visibility = 0 WHERE ID = ? AND visibility = 1;", [questionId]);
+        } catch (error) {
+            logger.error(error);
+        }
+        return;
+    } else {
+        res.status(400).json({code: 400, message: "Invalid visibility field."});
+    }
 });
 
 // path: /course/[courseId]/question/[questionId]
@@ -83,13 +156,57 @@ router.delete("/", (req: CourseQuestionRequest, res) => {
 // path: /course/[courseId]/question/[questionId]/cancel
 // POST: Requests cancellation. Server sets a cancel flag return 202;
 //       worker should stop if possible, or discard result and mark CANCELLED.
-router.post("/cancel", (req: CourseQuestionRequest, res) => {
-    // todo
-    console.debug(req.params.courseId, req.params.questionId);
-    res.status(200).json({
-        code: 200,
-        message: `Cancellation requested for course ${req.params.courseId} task ${req.params.questionId}!`
+//       If task is already DONE/ERROR/CANCELLED/STALE, return 410.
+router.post("/cancel", async (req: CourseQuestionRequest, res) => {
+    const {courseId, questionId} = req.params;
+    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+    const cancelKey = `course:${courseId}:question:${questionId}:cancel`;
+    const channelKey = `course:${courseId}:question:${questionId}:status`;
+
+    // set cancel flag
+    const status = await RedisClient.hGet(metaKey, "status");
+    if (!status) {
+        return res.status(404).json({
+            code: 404,
+            message: `Question ${questionId} not found in course ${courseId}.`
+        });
+    }
+
+    if (["DONE", "ERROR", "CANCELLED", "STALE"].includes(status)) {
+        return res.status(200).json({
+            code: 410,
+            message: `Question ${questionId} is already ${status}.`,
+            data: {
+                status
+            }
+        });
+    }
+
+    await RedisClient.multi()
+        .set(cancelKey, 1, {EX: 3600})
+        .hSet(metaKey, "status", "CANCELLED")
+        .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
+        .exec();
+
+    // Immediate response
+    res.status(202).json({
+        code: 202,
+        message: `Cancellation requested for question ${questionId}.`,
+        data: {
+            status: "CANCELLED"
+        }
     });
+
+    // set database
+    try {
+        await DB.run("UPDATE questions SET status = 3 WHERE ID = ?", [questionId]);
+    } catch (err) {
+        logger.error(err);
+    }
+
+    // try to remove job
+    const job = await QuestionGenerateTaskQueue.getJob(questionId);
+    await job?.remove();
 });
 
 // path: /course/[courseId]/question/[questionId]/stream
@@ -107,7 +224,7 @@ router.post("/cancel", (req: CourseQuestionRequest, res) => {
  *   }
  *
  * After DONE/ERROR/CANCELLED/STALE, server may close the stream.
- * If status is DONE/ERROR/CANCELLED/STALE, return 410
+ * If status is DONE/ERROR/CANCELLED/STALE
  */
 router.get("/stream", async (req: CourseQuestionRequest, res) => {
     const {courseId, questionId} = req.params;
@@ -115,14 +232,27 @@ router.get("/stream", async (req: CourseQuestionRequest, res) => {
     const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
     const channelKey = `course:${courseId}:question:${questionId}:status`;
 
+    // push status to client
+    const send = (status: string) => {
+        res.write(`event: status\n`);
+        res.write(`data: ${JSON.stringify({questionId, status})}\n\n`);
+    };
+
+    // Send header
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
     // immediate send current status
     const terminal = new Set(["DONE", "ERROR", "CANCELLED", "STALE"]);
     const current = (await RedisClient.hGet(metaKey, "status")) ?? "PENDING";
+    send(current);
+
+    // If status is DONE/ERROR/CANCELLED/STALE
     if (terminal.has(current)) {
-        return res.status(410).json({
-            code: 410,
-            message: `Question ${questionId} is already ${current}.`
-        });
+        return res.end();
     }
 
     // check heartbeat, if no heartbeat, consider it STALE
@@ -137,25 +267,10 @@ router.get("/stream", async (req: CourseQuestionRequest, res) => {
                 updatedAt: new Date().toISOString()
             })
             .exec();
-        return res.status(410).json({
-            code: 410,
-            message: `Question ${questionId} is STALE now.`
-        });
+
+        send("STALE");
+        return res.end();
     }
-
-    // push status to client
-    const send = (status: string) => {
-        res.write(`event: status\n`);
-        res.write(`data: ${JSON.stringify({questionId, status})}\n\n`);
-    };
-
-    // Send header
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders?.();
-    send(current);
 
     // pub/sub client
     const sub = RedisClient.duplicate();

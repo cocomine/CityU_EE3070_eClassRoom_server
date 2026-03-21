@@ -179,7 +179,7 @@ SSE endpoint 建議行為：
 
 ## Client 拿最終問題
 
-### 11) Client 收到 DONE 後
+### 11) Client 收到 DONE 後 OK
 
 呼叫：
 `GET /v1/tasks/:taskId/result`

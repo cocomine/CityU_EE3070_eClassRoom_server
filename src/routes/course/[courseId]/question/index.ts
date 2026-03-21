@@ -104,11 +104,12 @@ router.post("/", async (req: PostQuestionRequest, res) => {
 
     // Enqueue Job
     await QuestionGenerateTaskQueue.add("QuestionGenerateTask", {questionId, courseId, prompt}, {
+        jobId: questionId,
         removeOnComplete: true,
         removeOnFail: true,
         attempts: 5,
         backoff: {
-            type: "fixed",
+            type: "exponential",
             delay: 1000,
         }
     });

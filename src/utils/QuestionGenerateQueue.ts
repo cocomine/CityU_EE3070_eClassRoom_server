@@ -148,19 +148,29 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
     const channelKey = `course:${courseId}:question:${questionId}:status`;
     const resultKey = `course:${courseId}:question:${questionId}:result`;
+    const cancelKey = `course:${courseId}:question:${questionId}:cancel`;
     logger.info(`Processing question generate task. courseId: ${courseId}, taskId: ${questionId}, prompt: ${prompt}, attempt: ${job.attemptsStarted}`);
+
+    // heartbeat to prevent stale
+    const heartbeat = setInterval(async () => {
+        await RedisClient.set(hbKey, new Date().toISOString(), {
+            EX: 60
+        });
+    }, 3000);
 
     /**
      * Check status is canceled
      * @return true = canceled, false = not canceled
      */
     const checkCanceled = async () => {
-        const status = await RedisClient.hGet(metaKey, "status");
-        if (status === "CANCELLED") {
+        const status = await RedisClient.exists(cancelKey);
+        if (status > 0) {
             logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
-            await RedisClient.publish(channelKey, JSON.stringify({
-                status: "CANCELLED"
-            }));
+            await RedisClient.multi()
+                .hSet(metaKey, {status: "CANCELLED"})
+                .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
+                .exec();
+            clearInterval(heartbeat);
             return true;
         }
         return false;
@@ -179,13 +189,6 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     await RedisClient.publish(channelKey, JSON.stringify({
         status: "GENERATING"
     }));
-
-    // heartbeat to prevent stale
-    const heartbeat = setInterval(async () => {
-        await RedisClient.set(hbKey, new Date().toISOString(), {
-            EX: 60
-        });
-    }, 3000);
 
     // call LLM
     let result: GeneratedQuestionSet;
@@ -277,45 +280,60 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             throw new Error("OpenRouter response is filtered by content filter: " + content);
         }
 
+        // update status
+        await RedisClient.multi()
+            .eval(SET_STATUS_LUA_SCRIPT, {
+                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                arguments: ["GENERATING", "DONE"],
+            })
+            .hSet(metaKey, {
+                updateAt: new Date().toISOString(),
+                finishedAt: new Date().toISOString(),
+            })
+            .exec();
+
         // get result
         result = JSON.parse(content);
         const multi = RedisClient.multi();
 
-        // save question
+        // save redis
         if (result.question && result.question.length > 0) {
-            const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
-            const params = result.question.flatMap((question, index) => [questionId, index, question]);
-            await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
-                          VALUES ${placeholders}`, params);
-
-            multi.json.set(resultKey, "$", result.question); // save redis
+            multi.json.set(resultKey, "$", result.question); // save question
         }
-
-        // save title
         if (result.title && result.title.length > 0) {
-            await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
-
-            multi.hSet(metaKey, {title: result.title}); // save redis
+            multi.hSet(metaKey, {title: result.title}); // save title
         }
-
-        // update status
-        await DB.run(`UPDATE questions
-                      SET status = 1
-                      WHERE ID = ?`, questionId);
-        multi.eval(SET_STATUS_LUA_SCRIPT, {
-            keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
-            arguments: ["GENERATING", "DONE"],
-        });
-        multi.hSet(metaKey, {
-            updateAt: new Date().toISOString(),
-            finishedAt: new Date().toISOString(),
-        });
 
         // pub/sub: publish status to channel
         multi.publish(channelKey, JSON.stringify({
             status: "DONE"
         }));
         await multi.exec();
+
+        // save database
+        await DB.exec("BEGIN");
+        try {
+            await DB.run(`UPDATE questions
+                          SET status = 1
+                          WHERE ID = ?`, questionId);
+
+            // save question
+            if (result.question && result.question.length > 0) {
+                const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
+                const params = result.question.flatMap((question, index) => [questionId, index, question]);
+                await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
+                              VALUES ${placeholders}`, params);
+            }
+
+            // save title
+            if (result.title && result.title.length > 0) {
+                await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
+            }
+            await DB.exec("COMMIT");
+        } catch (err) {
+            await DB.exec("ROLLBACK");
+            throw err;
+        }
     } catch (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
         if (await checkCanceled()) return;
@@ -381,10 +399,13 @@ async function shutdownQuestionGenerateTaskQueue() {
 
 // event listeners
 QuestionGenerateTaskQueueEvents.on("completed", (job) => {
-    logger.info(`Job ${job.jobId} track data save done`);
+    logger.info(`Job ${job.jobId} completed successfully.`);
 });
 QuestionGenerateTaskQueueEvents.on("failed", (job) => {
-    logger.error(`Job ${job.jobId} track data save failed:`, job.failedReason);
+    logger.error(`Job ${job.jobId} is failed: `, job.failedReason);
+});
+QuestionGenerateTaskQueueEvents.on("removed", (job) => {
+    logger.info(`Job ${job.jobId} is removed from the queue.`);
 });
 
 export {QuestionGenerateTaskQueue, QuestionGenerateTaskQueueEvents, shutdownQuestionGenerateTaskQueue};
