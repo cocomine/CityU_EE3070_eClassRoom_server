@@ -199,7 +199,6 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         top_p: 0.9,
         reasoning: {effort: "medium"},
         modalities: ["text"],
-        max_completion_tokens: 2000,
         metadata: {courseId, questionId},
         response_format: {
             type: "json_schema",
@@ -266,6 +265,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         });
 
         if (await checkCanceled()) return;
+        logger.debug(res.data.choices);
 
         // filter result
         const choice = res.data.choices.find(choice => choice.message.role === "assistant");

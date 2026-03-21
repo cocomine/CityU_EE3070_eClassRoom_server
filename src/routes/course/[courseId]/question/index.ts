@@ -17,8 +17,6 @@ export interface PostQuestionRequest extends CourseRequest {
 }
 
 /*=======router======*/
-// path: /course/[courseId]/question/[questionId]/*
-router.use("/:questionId", require("./[questionId]"));
 
 // path: /course/[courseId]/question
 // GET: list question
@@ -114,5 +112,10 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         }
     });
 });
+
+// path: /course/[courseId]/question/[questionId]/*
+router.use("/:questionId", require("./[questionId]"));
+logger.info("Loaded /course/[courseId]/question/[questionId]");
+
 
 module.exports = router;
