@@ -19,8 +19,8 @@ export interface QuestionGenerateJobDate {
 }
 
 interface GeneratedQuestionSet {
-    question: string[];
-    title: string;
+    question?: string[];
+    title?: string;
 }
 
 /* ===== OpenRouterChatCompletionResponse Type ===== */
@@ -127,7 +127,8 @@ MATERIAL:
 - All materials have been placed in the files.
 
 OTHER REQUIREMENTS:
-`;
+- Markdown Support.
+-`;
 
 const connection: ConnectionOptions = {
     url: REDIS_URL
@@ -143,23 +144,45 @@ const TestFile = fs.readFileSync("./Test.pdf", {encoding: "base64"});
  */
 const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGenerateTaskQueue", async (job) => {
     const {courseId, questionId, prompt} = job.data;
+    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+    const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
+    const channelKey = `course:${courseId}:question:${questionId}:status`;
+    const resultKey = `course:${courseId}:question:${questionId}:result`;
     logger.info(`Processing question generate task. courseId: ${courseId}, taskId: ${questionId}, prompt: ${prompt}, attempt: ${job.attemptsStarted}`);
 
+    /**
+     * Check status is canceled
+     * @return true = canceled, false = not canceled
+     */
+    const checkCanceled = async () => {
+        const status = await RedisClient.hGet(metaKey, "status");
+        if (status === "CANCELLED") {
+            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
+            await RedisClient.publish(channelKey, JSON.stringify({
+                status: "CANCELLED"
+            }));
+            return true;
+        }
+        return false;
+    };
+
+    if (await checkCanceled()) return;
+
     // update status
-    await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+    await RedisClient.hSet(metaKey, {
         status: "GENERATING",
         startAt: new Date().toISOString(),
         updateAt: new Date().toISOString()
     });
 
     // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
-    await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+    await RedisClient.publish(channelKey, JSON.stringify({
         status: "GENERATING"
     }));
 
     // heartbeat to prevent stale
     const heartbeat = setInterval(async () => {
-        await RedisClient.set("course:" + courseId + ":question:" + questionId + ":heartbeat", new Date().toISOString(), {
+        await RedisClient.set(hbKey, new Date().toISOString(), {
             EX: 60
         });
     }, 3000);
@@ -214,7 +237,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT + (prompt || "--- NO OTHER REQUIREMENTS ---")
+                    text: USER_PROMPT + (prompt || "--- NO MORE OTHER REQUIREMENTS ---")
                 }, {
                     type: "file",
                     file: {
@@ -239,12 +262,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             }
         });
 
-        // check status is "CANCELLED"
-        const status = await RedisClient.hGet("course:" + courseId + ":question:" + questionId + ":meta", "status");
-        if (status === "CANCELLED") {
-            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
-            return;
-        }
+        if (await checkCanceled()) return;
 
         // filter result
         const choice = res.data.choices.find(choice => choice.message.role === "assistant");
@@ -261,47 +279,64 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
 
         // get result
         result = JSON.parse(content);
-
-        // save result
         const multi = RedisClient.multi();
-        for (let item of result.question) {
-            multi.lPush("course:" + courseId + ":question:" + questionId + ":result", item);
-        }
-        await multi.exec();
 
-        // save database
-        if (result.question.length > 0) {
+        // save question
+        if (result.question && result.question.length > 0) {
             const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
             const params = result.question.flatMap((question, index) => [questionId, index, question]);
             await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
                           VALUES ${placeholders}`, params);
+
+            multi.json.set(resultKey, "$", result.question); // save redis
         }
+
+        // save title
+        if (result.title && result.title.length > 0) {
+            await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
+
+            multi.hSet(metaKey, {title: result.title}); // save redis
+        }
+
+        // update status
         await DB.run(`UPDATE questions
                       SET status = 1
                       WHERE ID = ?`, questionId);
+        multi.eval(SET_STATUS_LUA_SCRIPT, {
+            keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+            arguments: ["GENERATING", "DONE"],
+        });
+        multi.hSet(metaKey, {
+            updateAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+        });
+
+        // pub/sub: publish status to channel
+        multi.publish(channelKey, JSON.stringify({
+            status: "DONE"
+        }));
+        await multi.exec();
     } catch (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
-        const status = await RedisClient.hGet("course:" + courseId + ":question:" + questionId + ":meta", "status");
-        if (status === "CANCELLED") {
-            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
-            return;
-        }
+        if (await checkCanceled()) return;
 
         // if attempts >= 5
         if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
             // update status
-            await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
-                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
-                arguments: ["GENERATING", "ERROR"],
-            });
-            await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
-                updateAt: new Date().toISOString(),
-                finishedAt: new Date().toISOString(),
-                errorMessage: err.message
-            });
+            await RedisClient.multi()
+                .eval(SET_STATUS_LUA_SCRIPT, {
+                    keys: [metaKey],
+                    arguments: ["GENERATING", "ERROR"],
+                })
+                .hSet(metaKey, {
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
+                    errorMessage: err.message
+                })
+                .exec();
 
             // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
-            await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+            await RedisClient.publish(channelKey, JSON.stringify({
                 status: "ERROR"
             }));
 
@@ -312,12 +347,12 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         } else {
             // attempts < 5
             await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
-                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                keys: [metaKey],
                 arguments: ["GENERATING", "PENDING"],
             });
 
             // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
-            await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
+            await RedisClient.publish(channelKey, JSON.stringify({
                 status: "PENDING"
             }));
         }
@@ -327,21 +362,6 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     } finally {
         clearInterval(heartbeat);
     }
-
-    // update status
-    await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
-        keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
-        arguments: ["GENERATING", "DONE"],
-    });
-    await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
-        updateAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-    });
-
-    // pub/sub: publish status to channel
-    await RedisClient.publish("course:" + courseId + ":question:" + questionId + ":status", JSON.stringify({
-        status: "DONE"
-    }));
 }, {connection, concurrency: 1});
 
 /**
