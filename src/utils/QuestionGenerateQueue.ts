@@ -5,6 +5,7 @@ import axios, {AxiosError} from "axios";
 import {DB} from "../sql_service";
 import fs from "fs";
 import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
+import xss from "xss";
 
 /**
  * QuestionGenerateJobDate defines the data structure for a job in the question generation queue. Each job contains:
@@ -281,7 +282,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         }
 
         // get result
-        result = JSON.parse(content);
+        result = JSON.parse(xss(content));
 
         // stop before DB write if cancellation arrives after LLM response
         if (await checkCanceled()) return;
