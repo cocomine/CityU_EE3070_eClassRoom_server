@@ -31,9 +31,6 @@ router.use(async (req: CourseRequest, res, next) => {
 
 
 /*=======router======*/
-// path: /course/[courseId]/question/*
-router.use("/question", require("./question"));
-logger.info("Loaded /course/[courseId]/question");
 
 // path: /course/[courseId]
 // GET: Get course info
@@ -48,5 +45,13 @@ router.get("/", async (req: CourseRequest, res) => {
 
     res.json({code: 200, message: "Course info retrieved successfully", data: {id: courseId, name: course}});
 });
+
+// path: /course/[courseId]/question/*
+router.use("/question", require("./question"));
+logger.info("Loaded /course/[courseId]/question");
+
+// path: /course/[courseId]/file/*
+router.use("/:courseId", require("./file"));
+logger.info("Loaded /course/[courseId]/file");
 
 module.exports = router;

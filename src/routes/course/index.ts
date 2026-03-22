@@ -12,10 +12,6 @@ export interface PostCourseBody {
 }
 
 /*=======router======*/
-// path: /course/[courseId]/*
-router.use("/:courseId", require("./[courseId]"));
-logger.info("Loaded /course/[courseId]");
-
 // path: /course
 // GET: list course
 router.get("/", async (req, res) => {
@@ -58,6 +54,9 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
     }
 });
 
+// path: /course/[courseId]/*
+router.use("/:courseId", require("./[courseId]"));
+logger.info("Loaded /course/[courseId]");
 /*======= router end =========*/
 
 module.exports = router;
