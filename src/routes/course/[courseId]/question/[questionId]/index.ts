@@ -99,12 +99,12 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
     if (!status) {
         return res.status(404).json({
             code: 404,
-            message: `Question ${questionId} not found in course ${courseId}.`
+            message: `Question ${questionId} not found.`
         });
     }
     if (status !== "DONE") {
-        return res.status(200).json({
-            code: 410,
+        return res.status(409).json({
+            code: 409,
             message: `Question ${questionId} is ${status}.`,
             data: {
                 status
