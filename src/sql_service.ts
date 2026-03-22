@@ -1,6 +1,6 @@
 import {getLogger} from "log4js";
-import sqlite3 from 'sqlite3';
-import {Database, open} from 'sqlite';
+import sqlite3 from "sqlite3";
+import {Database, open} from "sqlite";
 
 const logger = getLogger('sqlite');
 
@@ -13,7 +13,9 @@ export async function openDB() {
             filename: 'database.db',
             driver: sqlite3.Database
         });
-        logger.info('SQLite database opened.');
+        await DB.exec("PRAGMA foreign_keys = ON;");
+        const fkState = await DB.get<{ foreign_keys: number }>("PRAGMA foreign_keys;");
+        logger.info(`SQLite database opened. foreign_keys=${fkState?.foreign_keys ?? "unknown"}.`);
     } catch (err) {
         logger.error('Failed to open SQLite database.', err);
         throw err;

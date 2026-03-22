@@ -151,31 +151,58 @@ router.delete("/", async (req: CourseQuestionRequest, res) => {
     const metaKey = `course:${courseId}:question:${questionId}:meta`;
     const resultKey = `course:${courseId}:question:${questionId}:result`;
     const questionKey = `course:${courseId}:question`;
+    const cancelKey = `course:${courseId}:question:${questionId}:cancel`;
+    const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
 
-    // get meta
-    if (!await RedisClient.exists(metaKey)) {
+    // check status
+    const status = await RedisClient.hGet(metaKey, "status");
+    if (!status) {
         return res.status(404).json({
             code: 404,
             message: `Question ${questionId} not found in course ${courseId}.`
         });
     }
+    if (!["DONE", "ERROR", "CANCELLED", "STALE"].includes(status)) {
+        return res.status(409).json({
+            code: 409,
+            message: `Question ${questionId} is ${status}.`,
+            data: {
+                status
+            }
+        });
+    }
 
-    // delete redis
-    await RedisClient.multi()
-        .del(metaKey)
-        .del(resultKey)
-        .sRem(questionKey, questionId)
-        .exec();
-
-    // delete database
-    await DB.exec("BEGIN");
     try {
-        await DB.run("DELETE FROM questions_list WHERE question_ID = ?;", [questionId]);
-        await DB.run("DELETE FROM questions WHERE ID = ?;", [questionId]);
-        await DB.exec("COMMIT");
+        const deleteResult = await DB.run("DELETE FROM questions WHERE ID = ?;", [questionId]);
+        if ((deleteResult.changes ?? 0) === 0) {
+            return res.status(404).json({
+                code: 404,
+                message: `Question ${questionId} not found in database.`
+            });
+        }
     } catch (e) {
-        await DB.exec("ROLLBACK");
         logger.error(e);
+        return res.status(500).json({
+            code: 500,
+            message: `Failed to delete question ${questionId}.`
+        });
+    }
+
+    // delete redis cache and queue-related keys after DB commit
+    try {
+        await RedisClient.multi()
+            .del(metaKey)
+            .del(resultKey)
+            .del(cancelKey)
+            .del(hbKey)
+            .sRem(questionKey, questionId)
+            .exec();
+    } catch (e) {
+        logger.error(e);
+        return res.status(500).json({
+            code: 500,
+            message: `Question ${questionId} is deleted from database, but failed to clean Redis cache.`
+        });
     }
 
     res.json({code: 200, message: `Question ${questionId} is deleted.`});

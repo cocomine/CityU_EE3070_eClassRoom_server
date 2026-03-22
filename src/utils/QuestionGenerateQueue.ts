@@ -283,13 +283,22 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         // get result
         result = JSON.parse(content);
 
+        // stop before DB write if cancellation arrives after LLM response
+        if (await checkCanceled()) return;
+
         // save database
         await DB.exec("BEGIN");
         try {
-            await DB.run(`UPDATE questions
-                          SET status = 1
-                          WHERE ID = ?
-                            AND status != 3`, questionId);
+            const statusUpdate = await DB.run(`UPDATE questions
+                                               SET status = 1
+                                               WHERE ID = ?
+                                                 AND status != 3`, questionId);
+            if ((statusUpdate.changes ?? 0) === 0) {
+                // canceled tasks must not persist generated content
+                await DB.exec("ROLLBACK");
+                logger.info(`Skip persisting generated result because question ${questionId} is cancelled.`);
+                return;
+            }
 
             // save question
             if (result.question && result.question.length > 0) {
