@@ -79,3 +79,32 @@ return 0
     }
 }
 ```
+
+# Question Meta
+
+```json5
+{
+    "visibility": "0",
+    // 0 = private, 1 = public
+    "createAt": "2026-03-22T16:11:28.997Z",
+    // ISO 8601 format
+    "finishedAt": "",
+    // ISO 8601 format, empty if not finished
+    "errorMessage": "",
+    // error message if status is ERROR, empty otherwise
+    "questionId": "bc5e102c-4861-4306-8190-713b99991b86",
+    // UUID format
+    "updateAt": "2026-03-22T16:11:29.019Z",
+    // ISO 8601 format
+    "title": "New Question (xxxx)",
+    // title of the question
+    "prompt": "",
+    // the prompt used to generate the question, can be empty if not applicable
+    "startAt": "2026-03-22T16:11:29.019Z",
+    // ISO 8601 format, when the question generation started, can be empty if not started
+    "status": "GENERATING",
+    // PENDING, GENERATING, DONE, ERROR, CANCELLED, STALE
+    "courseId": "546644f3-9632-42b1-a916-79c1657f9938"
+    // UUID format, the course this question belongs to
+}
+```

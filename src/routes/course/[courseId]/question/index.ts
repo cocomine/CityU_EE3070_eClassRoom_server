@@ -5,6 +5,7 @@ import {RedisClient} from "../../../../redis_service";
 import {QuestionGenerateTaskQueue} from "../../../../utils/QuestionGenerateQueue";
 import {DB} from "../../../../sql_service";
 import {SET_IDEM_LUA_SCRIPT} from "../../../../utils/LuaScript";
+import xss from "xss";
 
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question");
@@ -20,17 +21,34 @@ export interface PostQuestionRequest extends CourseRequest {
 
 // path: /course/[courseId]/question
 // GET: list question
-router.get("/", (req: CourseRequest, res) => {
-    // todo
-    console.debug(req.params.courseId);
-    res.status(200).json({code: 200, message: "This is course " + req.params.courseId + " question!"});
+router.get("/", async (req: CourseRequest, res) => {
+    const {courseId} = req.params;
+    const questionKey = `course:${courseId}:question`;
+    const metaList = [];
+
+    // check exists
+    if (await RedisClient.exists(questionKey) === 0) {
+        return res.status(404).json({code: 404, message: `No any question found in course ${courseId}.`});
+    }
+
+    // get all question meta
+    const questionIdList = await RedisClient.sMembers(questionKey);
+    for (let questionId of questionIdList) {
+        const metaKey = `course:${courseId}:question:${questionId}:meta`;
+        const meta = await RedisClient.hGetAll(metaKey);
+
+        if (Object.keys(meta).length === 0) continue;
+        metaList.push(meta);
+    }
+
+    res.json({code: 200, message: "All question meta get successfully.", data: metaList});
 });
 
 // path: /course/[courseId]/question
 // POST: create question
 router.post("/", async (req: PostQuestionRequest, res) => {
     const courseId = req.params.courseId;
-    const prompt = req.body?.prompt || null;
+    const prompt = xss(req.body?.prompt || "");
     const clientTaskId = req.body?.clientTaskId;
     const idemKey = `idem:question:${clientTaskId}`;
     const questionKey = `course:${courseId}:question`;
@@ -45,6 +63,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         return res.status(400).json({code: 400, message: "clientTaskId must use UUID format"});
     }
 
+    // Key
     const questionId = crypto.randomUUID();
     const metaKey = `course:${courseId}:question:${questionId}:meta`;
 
@@ -64,20 +83,21 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // new task
-    const title = prompt ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
+    const title = prompt === "" ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
     // save meta
     await RedisClient.hSet(metaKey, {
         courseId,
         title,
-        prompt: prompt || "",
+        prompt,
         questionId,
         status: "PENDING",
         visibility: 0, // default private
         createAt: new Date().toISOString(),
         startAt: "",
         finishedAt: "",
-        errorMessage: ""
+        errorMessage: "",
+        updateAt: new Date().toISOString()
     });
     await RedisClient.sAdd(questionKey, questionId);
 

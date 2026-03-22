@@ -239,7 +239,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT + (prompt || "--- NO MORE OTHER REQUIREMENTS ---")
+                    text: USER_PROMPT + prompt + "\n--- NO MORE OTHER REQUIREMENTS ---"
                 }, {
                     type: "file",
                     file: {
