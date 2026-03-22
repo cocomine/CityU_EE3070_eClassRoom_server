@@ -122,6 +122,8 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
         } catch (error) {
             logger.error(error);
         }
+
+        logger.info(`Question ${questionId} in course ${courseId} is set to public.`);
         return;
     } else if (visibility === "private") {
         // make private
@@ -133,6 +135,8 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
         } catch (error) {
             logger.error(error);
         }
+
+        logger.info(`Question ${questionId} in course ${courseId} is private.`);
         return;
     } else {
         res.status(400).json({code: 400, message: "Invalid visibility field."});
@@ -142,13 +146,40 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
 // path: /course/[courseId]/question/[questionId]
 // DEL: delete question return 204.
 //      If task is not finished yet, return 409 Conflict with current status (meta).
-router.delete("/", (req: CourseQuestionRequest, res) => {
-    // todo
-    console.debug(req.params.courseId, req.params.questionId);
-    res.status(200).json({
-        code: 200,
-        message: "This is course " + req.params.courseId + " question " + req.params.questionId + " delete!"
-    });
+router.delete("/", async (req: CourseQuestionRequest, res) => {
+    const {courseId, questionId} = req.params;
+    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+    const resultKey = `course:${courseId}:question:${questionId}:result`;
+    const questionKey = `course:${courseId}:question`;
+
+    // get meta
+    if (!await RedisClient.exists(metaKey)) {
+        return res.status(404).json({
+            code: 404,
+            message: `Question ${questionId} not found in course ${courseId}.`
+        });
+    }
+
+    // delete redis
+    await RedisClient.multi()
+        .del(metaKey)
+        .del(resultKey)
+        .sRem(questionKey, questionId)
+        .exec();
+
+    // delete database
+    await DB.exec("BEGIN");
+    try {
+        await DB.run("DELETE FROM questions_list WHERE question_ID = ?;", [questionId]);
+        await DB.run("DELETE FROM questions WHERE ID = ?;", [questionId]);
+        await DB.exec("COMMIT");
+    } catch (e) {
+        await DB.exec("ROLLBACK");
+        logger.error(e);
+    }
+
+    res.json({code: 200, message: `Question ${questionId} is deleted.`});
+    logger.warn(`Question ${questionId} in course ${courseId} is deleted.`);
 });
 
 // path: /course/[courseId]/question/[questionId]/cancel/*

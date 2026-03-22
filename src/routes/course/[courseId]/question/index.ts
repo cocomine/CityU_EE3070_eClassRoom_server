@@ -32,6 +32,8 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     const courseId = req.params.courseId;
     const prompt = req.body?.prompt || null;
     const clientTaskId = req.body?.clientTaskId;
+    const idemKey = `idem:question:${clientTaskId}`;
+    const questionKey = `course:${courseId}:question`;
 
     // Check clientTaskId
     if (!clientTaskId) {
@@ -43,10 +45,12 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         return res.status(400).json({code: 400, message: "clientTaskId must use UUID format"});
     }
 
-    // Idempotency
     const questionId = crypto.randomUUID();
+    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+
+    // Idempotency
     const idem = await RedisClient.eval(SET_IDEM_LUA_SCRIPT, {
-        keys: ["idem:task:" + clientTaskId],
+        keys: [idemKey],
         arguments: [questionId]
     });
     if (idem) {
@@ -63,7 +67,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     const title = prompt ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
     // save meta
-    await RedisClient.hSet("course:" + courseId + ":question:" + questionId + ":meta", {
+    await RedisClient.hSet(metaKey, {
         courseId,
         title,
         prompt: prompt || "",
@@ -75,7 +79,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         finishedAt: "",
         errorMessage: ""
     });
-    await RedisClient.sAdd("course:" + courseId + ":question", questionId);
+    await RedisClient.sAdd(questionKey, questionId);
 
     // save database
     try {

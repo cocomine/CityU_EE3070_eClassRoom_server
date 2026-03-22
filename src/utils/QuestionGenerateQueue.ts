@@ -280,42 +280,16 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             throw new Error("OpenRouter response is filtered by content filter: " + content);
         }
 
-        // update status
-        await RedisClient.multi()
-            .eval(SET_STATUS_LUA_SCRIPT, {
-                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
-                arguments: ["GENERATING", "DONE"],
-            })
-            .hSet(metaKey, {
-                updateAt: new Date().toISOString(),
-                finishedAt: new Date().toISOString(),
-            })
-            .exec();
-
         // get result
         result = JSON.parse(content);
-        const multi = RedisClient.multi();
-
-        // save redis
-        if (result.question && result.question.length > 0) {
-            multi.json.set(resultKey, "$", result.question); // save question
-        }
-        if (result.title && result.title.length > 0) {
-            multi.hSet(metaKey, {title: result.title}); // save title
-        }
-
-        // pub/sub: publish status to channel
-        multi.publish(channelKey, JSON.stringify({
-            status: "DONE"
-        }));
-        await multi.exec();
 
         // save database
         await DB.exec("BEGIN");
         try {
             await DB.run(`UPDATE questions
                           SET status = 1
-                          WHERE ID = ?`, questionId);
+                          WHERE ID = ?
+                            AND status != 3`, questionId);
 
             // save question
             if (result.question && result.question.length > 0) {
@@ -334,6 +308,30 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             await DB.exec("ROLLBACK");
             throw err;
         }
+
+        // save redis
+        const multi = RedisClient.multi();
+        multi.hSet(metaKey, {
+            updateAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+        });
+        if (result.question && result.question.length > 0) {
+            multi.json.set(resultKey, "$", result.question); // save question
+        }
+        if (result.title && result.title.length > 0) {
+            multi.hSet(metaKey, {title: result.title}); // save title
+        }
+
+        // update status
+        await multi
+            .eval(SET_STATUS_LUA_SCRIPT, {
+                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                arguments: ["GENERATING", "DONE"],
+            })
+            .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
+                status: "DONE"
+            }))
+            .exec();
     } catch (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
         if (await checkCanceled()) return;
@@ -405,7 +403,7 @@ QuestionGenerateTaskQueueEvents.on("failed", (job) => {
     logger.error(`Job ${job.jobId} is failed: `, job.failedReason);
 });
 QuestionGenerateTaskQueueEvents.on("removed", (job) => {
-    logger.info(`Job ${job.jobId} is removed from the queue.`);
+    logger.warn(`Job ${job.jobId} is removed from the queue.`);
 });
 
 export {QuestionGenerateTaskQueue, QuestionGenerateTaskQueueEvents, shutdownQuestionGenerateTaskQueue};
