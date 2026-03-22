@@ -2,7 +2,7 @@
 
 questions → visibility: 0 = private, 1 = public
 
-questions → status: 0 = PENDING, 1 = DONE, 3 = CANCELLED
+questions → status: 0 = PENDING, 1 = DONE, 2 = ERROR, 3 = CANCELLED
 
 # Questions Gen Status
 

@@ -221,8 +221,8 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                         title: {
                             type: "string",
                             minLength: 1,
-                            maxLength: 600,
-                            description: "A short title about these 4 questions. Must be within 100 words."
+                            maxLength: 500,
+                            description: "A short title about these 4 questions. Must be within 20 words."
                         }
                     },
                     required: ["question", "title"],
@@ -413,6 +413,9 @@ QuestionGenerateTaskQueueEvents.on("failed", (job) => {
 });
 QuestionGenerateTaskQueueEvents.on("removed", (job) => {
     logger.warn(`Job ${job.jobId} is removed from the queue.`);
+});
+QuestionGenerateTaskQueueEvents.on("added", (job) => {
+    logger.info(`Job ${job.jobId} is added to the queue.`);
 });
 
 export {QuestionGenerateTaskQueue, QuestionGenerateTaskQueueEvents, shutdownQuestionGenerateTaskQueue};
