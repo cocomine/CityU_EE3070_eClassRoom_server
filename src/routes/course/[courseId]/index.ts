@@ -51,7 +51,7 @@ router.use("/question", require("./question"));
 logger.info("Loaded /course/[courseId]/question");
 
 // path: /course/[courseId]/file/*
-router.use("/:courseId", require("./file"));
+router.use("/file", require("./file"));
 logger.info("Loaded /course/[courseId]/file");
 
 module.exports = router;
