@@ -29,6 +29,7 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     const metaKey = `course:${courseId}:question:${questionId}:meta`;
     const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
     const channelKey = `course:${courseId}:question:${questionId}:status`;
+    logger.info(`Client connected to question ${questionId} status stream`);
 
     // push status to client
     const send = (status: string) => {

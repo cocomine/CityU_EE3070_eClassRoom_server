@@ -43,7 +43,7 @@ router.delete("/", async (req: CourseFileRequest, res) => {
     try {
         await DB.exec("BEGIN");
         const file = await DB.get<{ sha256: string }>(
-            "SELECT sha256 FROM files WHERE ID = ? AND course_ID = ? LIMIT 1;",
+            "SELECT sha256 FROM files WHERE ID = ? AND courseID = ? LIMIT 1;",
             [fileId, courseId]
         );
 
@@ -57,7 +57,7 @@ router.delete("/", async (req: CourseFileRequest, res) => {
         }
 
         // delete
-        await DB.run("DELETE FROM files WHERE ID = ?", [fileId, courseId]);
+        await DB.run("DELETE FROM files WHERE ID = ?", [fileId]);
         await DB.run(
             `DELETE
              FROM file_blob

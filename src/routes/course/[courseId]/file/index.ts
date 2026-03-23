@@ -127,6 +127,7 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
             sha256
         }
     });
+    logger.info(`File ${filename} (${fileId}) uploaded successfully in course ${courseId}.`);
 });
 
 // path: /course/[courseId]/file/[fileId]/*

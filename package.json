@@ -1,6 +1,6 @@
 {
   "name": "ee3070-project-server",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "EE3070 Project Server",
   "main": "index.js",
   "scripts": {
