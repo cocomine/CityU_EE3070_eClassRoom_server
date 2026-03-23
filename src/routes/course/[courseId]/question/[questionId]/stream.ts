@@ -46,6 +46,13 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     // immediate send current status
     const terminal = new Set(["DONE", "ERROR", "CANCELLED", "STALE"]);
     const current = (await RedisClient.hGet(metaKey, "status")) ?? "PENDING";
+    const title = (await RedisClient.hGet(metaKey, "title")) ?? "PENDING";
+
+    // if status = DONE, send title
+    if (current === "DONE") {
+        res.write(`event: delta\n`);
+        res.write(`data: ${JSON.stringify({questionId, title})}\n\n`);
+    }
     send(current);
 
     // If status is DONE/ERROR/CANCELLED/STALE
@@ -75,7 +82,7 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     await sub.connect();
 
     // keepAlive
-    const keepAlive = setInterval(() => res.write(": ping\n\n"), 3000);
+    const keepAlive = setInterval(() => res.write(": ping\n\n"), 5000);
 
     // close connect
     const cleanup = async () => {
@@ -95,7 +102,14 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     await sub.subscribe(channelKey, async (msg) => {
         let status = "PENDING";
         try {
-            status = JSON.parse(msg).status ?? status;
+            const data = JSON.parse(msg);
+            status = data.status ?? status;
+
+            // if done send title
+            if (status === "DONE" && data.title) {
+                res.write(`event: delta\n`);
+                res.write(`data: ${JSON.stringify({questionId, title: data.title})}\n\n`);
+            }
         } catch {
         }
         send(status);

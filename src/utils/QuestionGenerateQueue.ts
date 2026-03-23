@@ -3,7 +3,6 @@ import {REDIS_URL, RedisClient} from "../redis_service";
 import {getLogger} from "log4js";
 import axios, {AxiosError} from "axios";
 import {DB} from "../sql_service";
-import fs from "fs";
 import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
 import xss from "xss";
 
@@ -19,10 +18,41 @@ export interface QuestionGenerateJobDate {
     prompt: string;
 }
 
-interface GeneratedQuestionSet {
+export interface GeneratedQuestionSet {
     question?: string[];
     title?: string;
 }
+
+export interface ChatMessageContentItemFile {
+    type: "file",
+    file: {
+        file_data: `data:${string};base64,${string}`,
+        filename: string
+    }
+}
+
+export interface ChatMessageContentItemImage {
+    type: "image_url",
+    image_url: {
+        url: `data:${string};base64,${string}`,
+        detail: "auto" | "low" | "high"
+    }
+}
+
+export interface ChatMessageContentItemText {
+    type: "text",
+    text: string;
+    cache_control?: {
+        type: "ephemeral",
+        ttl: "5m" | "1h"
+    }
+}
+
+export type ChatMessageContent =
+    string
+    | ChatMessageContentItemImage
+    | ChatMessageContentItemFile
+    | ChatMessageContentItemText;
 
 /* ===== OpenRouterChatCompletionResponse Type ===== */
 interface OpenRouterChatCompletionResponse {
@@ -85,7 +115,6 @@ interface OpenRouterUsage {
     cost_details?: Record<string, number>;
     completion_tokens_details?: Record<string, number>;
 }
-
 /* ===== penRouterChatCompletionResponse Type End ===== */
 
 /* ==== Prompt === */
@@ -138,8 +167,6 @@ const QuestionGenerateTaskQueue = new Queue("QuestionGenerateTaskQueue", {connec
 const QuestionGenerateTaskQueueEvents = new QueueEvents("QuestionGenerateTaskQueue", {connection});
 const logger = getLogger("/utils/QuestionGenerateQueue");
 
-const TestFile = fs.readFileSync("./Test.pdf", {encoding: "base64"});
-
 /**
  * GenerateTaskQueueWorker processes jobs from the "QuestionGenerateTaskQueue".
  */
@@ -191,6 +218,39 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         status: "GENERATING"
     }));
 
+    // get all files in course
+    const fileList: ChatMessageContent[] = [];
+    await DB.each<{
+        mime: string,
+        blob: Buffer,
+        filename: string
+    }>("SELECT fb.mime, fb.blob, f.filename FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId],
+        (err, row) => {
+            if (err) throw err;
+            const base64 = row.blob.toString("base64");
+
+            if (row.mime.includes("image/")) {
+                // image file
+
+                fileList.push({
+                    type: "image_url",
+                    image_url: {
+                        url: `data:${row.mime};base64,${base64}`,
+                        detail: "high"
+                    }
+                });
+            } else {
+                // other file
+                fileList.push({
+                    type: "file",
+                    file: {
+                        file_data: `data:${row.mime};base64,${base64}`,
+                        filename: row.filename
+                    }
+                });
+            }
+        });
+
     // call LLM
     let result: GeneratedQuestionSet;
     const requestBody = {
@@ -241,19 +301,8 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 {
                     type: "text",
                     text: USER_PROMPT + prompt + "\n--- NO MORE OTHER REQUIREMENTS ---"
-                }, {
-                    type: "file",
-                    file: {
-                        file_data: "data:application/pdf;base64," + TestFile,
-                        filename: "test.pdf"
-                    }
-                }
-                //TODO: file upload
-                /*{
-                    type: "input_image",
-                    image_url: "data:image/",
-                    detail: "high"
-                }*/
+                },
+                ...fileList
             ]
         }]
     };
@@ -334,7 +383,8 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                     arguments: ["GENERATING", "DONE"],
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
-                    status: "DONE"
+                    status: "DONE",
+                    title: result.title
                 }))
                 .exec();
             await DB.exec("COMMIT");
@@ -363,7 +413,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
 
             // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
             await RedisClient.publish(channelKey, JSON.stringify({
-                status: "ERROR"
+                status: "ERROR",
             }));
 
             // update DB
