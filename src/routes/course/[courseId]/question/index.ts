@@ -85,30 +85,35 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     // new task
     const title = prompt === "" ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
-    // save meta
-    await RedisClient.hSet(metaKey, {
-        courseId,
-        title,
-        prompt,
-        questionId,
-        status: "PENDING",
-        visibility: 0, // default private
-        createAt: new Date().toISOString(),
-        startAt: "",
-        finishedAt: "",
-        errorMessage: "",
-        updateAt: new Date().toISOString()
-    });
-    await RedisClient.sAdd(questionKey, questionId);
-
-    // save database
     try {
+        await DB.exec("BEGIN");
+        // save database
         const stmt = await DB.prepare(
             `INSERT INTO questions (id, courseID, title, prompt)
              VALUES (?, ?, ?, ?)`);
         await stmt.bind(questionId, courseId, title, prompt);
         await stmt.run();
+
+        // save meta
+        await RedisClient.multi()
+            .hSet(metaKey, {
+                courseId,
+                title,
+                prompt,
+                questionId,
+                status: "PENDING",
+                visibility: 0, // default private
+                createAt: new Date().toISOString(),
+                startAt: "",
+                finishedAt: "",
+                errorMessage: "",
+                updateAt: new Date().toISOString()
+            })
+            .sAdd(questionKey, questionId)
+            .exec();
+        await DB.exec("COMMIT");
     } catch (err) {
+        await DB.exec("ROLLBACK");
         logger.error(err);
         return res.status(500).json({code: 500, message: "Failed to create question."});
     }

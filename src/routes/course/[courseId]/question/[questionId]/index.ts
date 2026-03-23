@@ -114,28 +114,40 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
 
     if (visibility === "public") {
         // make public
-        await RedisClient.hSet(metaKey, {visibility});
-        res.json({code: 200, message: `Question ${questionId} is Public.`, data: {visibility}});
-
         try {
+            await DB.exec("BEGIN");
             await DB.run("UPDATE questions SET visibility = 1 WHERE ID = ? AND visibility = 0;", [questionId]);
+            await RedisClient.hSet(metaKey, {visibility});
+            await DB.exec("COMMIT");
         } catch (error) {
+            await DB.exec("ROLLBACK");
             logger.error(error);
+            return res.status(500).json({
+                code: 500,
+                message: `Question ${questionId} failed to set Public.`
+            });
         }
 
+        res.json({code: 200, message: `Question ${questionId} is Public.`, data: {visibility}});
         logger.info(`Question ${questionId} in course ${courseId} is set to public.`);
         return;
     } else if (visibility === "private") {
         // make private
-        await RedisClient.hSet(metaKey, {visibility});
-        res.json({code: 200, message: `Question ${questionId} is Public.`, data: {visibility}});
-
         try {
+            await DB.exec("BEGIN");
             await DB.run("UPDATE questions SET visibility = 0 WHERE ID = ? AND visibility = 1;", [questionId]);
+            await RedisClient.hSet(metaKey, {visibility});
+            await DB.exec("COMMIT");
         } catch (error) {
+            await DB.exec("ROLLBACK");
             logger.error(error);
+            return res.status(500).json({
+                code: 500,
+                message: `Question ${questionId} failed to set private.`
+            });
         }
 
+        res.json({code: 200, message: `Question ${questionId} is private.`, data: {visibility}});
         logger.info(`Question ${questionId} in course ${courseId} is private.`);
         return;
     } else {
@@ -173,6 +185,8 @@ router.delete("/", async (req: CourseQuestionRequest, res) => {
     }
 
     try {
+        await DB.exec("BEGIN");
+        // delete database
         const deleteResult = await DB.run("DELETE FROM questions WHERE ID = ?;", [questionId]);
         if ((deleteResult.changes ?? 0) === 0) {
             return res.status(404).json({
@@ -180,16 +194,8 @@ router.delete("/", async (req: CourseQuestionRequest, res) => {
                 message: `Question ${questionId} not found in database.`
             });
         }
-    } catch (e) {
-        logger.error(e);
-        return res.status(500).json({
-            code: 500,
-            message: `Failed to delete question ${questionId}.`
-        });
-    }
 
-    // delete redis cache and queue-related keys after DB commit
-    try {
+        // delete redis
         await RedisClient.multi()
             .del(metaKey)
             .del(resultKey)
@@ -197,11 +203,13 @@ router.delete("/", async (req: CourseQuestionRequest, res) => {
             .del(hbKey)
             .sRem(questionKey, questionId)
             .exec();
+        await DB.exec("COMMIT");
     } catch (e) {
+        await DB.exec("ROLLBACK");
         logger.error(e);
         return res.status(500).json({
             code: 500,
-            message: `Question ${questionId} is deleted from database, but failed to clean Redis cache.`
+            message: `Failed to delete question ${questionId}.`
         });
     }
 

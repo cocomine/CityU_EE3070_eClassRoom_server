@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express, {Application} from "express";
+import express, {Application, ErrorRequestHandler} from "express";
 import log4js from "log4js";
 import figlet from "figlet";
 import {connectRedis, disconnectRedis} from "./redis_service";
@@ -7,12 +7,30 @@ import * as http from "node:http";
 import {closeDB, openDB} from "./sql_service";
 import {restoreRedis} from "./redis_restore";
 import {shutdownQuestionGenerateTaskQueue} from "./utils/QuestionGenerateQueue";
+import multer from "multer";
 
 const app: Application = express();
 const logger = log4js.getLogger("server");
 const PORT = parseInt(process.env.PORT || "3001");
 const HOST = process.env.HOST || "0.0.0.0";
 const NODE_ENV = process.env.NODE_ENV ?? "production";
+
+/**
+ * Error Handler for Multer
+ */
+const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+    logger.error(err);
+
+    // MulterError
+    if (err instanceof multer.MulterError) {
+        return res.status(400).json({code: 400, message: err.message});
+    }
+
+    res.status(500).json({code: 500, message: err.message});
+};
 
 // log to file
 log4js.configure({
@@ -37,6 +55,7 @@ logger.info("Server starting...");
 app.use(log4js.connectLogger(logger, {level: "auto"}));
 app.use(express.json());
 app.use(express.urlencoded({extended: true}));
+app.use(errorHandler);
 logger.info("Loaded middleware");
 /*======== End of middleware =======*/
 

@@ -287,9 +287,9 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         // stop before DB write if cancellation arrives after LLM response
         if (await checkCanceled()) return;
 
-        // save database
-        await DB.exec("BEGIN");
         try {
+            await DB.exec("BEGIN");
+            // save database
             const statusUpdate = await DB.run(`UPDATE questions
                                                SET status = 1
                                                WHERE ID = ?
@@ -313,35 +313,35 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             if (result.title && result.title.length > 0) {
                 await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
             }
+
+            // save redis
+            const multi = RedisClient.multi();
+            multi.hSet(metaKey, {
+                updateAt: new Date().toISOString(),
+                finishedAt: new Date().toISOString(),
+            });
+            if (result.question && result.question.length > 0) {
+                multi.json.set(resultKey, "$", result.question); // save question
+            }
+            if (result.title && result.title.length > 0) {
+                multi.hSet(metaKey, {title: result.title}); // save title
+            }
+
+            // update status
+            await multi
+                .eval(SET_STATUS_LUA_SCRIPT, {
+                    keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                    arguments: ["GENERATING", "DONE"],
+                })
+                .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
+                    status: "DONE"
+                }))
+                .exec();
             await DB.exec("COMMIT");
         } catch (err) {
             await DB.exec("ROLLBACK");
             throw err;
         }
-
-        // save redis
-        const multi = RedisClient.multi();
-        multi.hSet(metaKey, {
-            updateAt: new Date().toISOString(),
-            finishedAt: new Date().toISOString(),
-        });
-        if (result.question && result.question.length > 0) {
-            multi.json.set(resultKey, "$", result.question); // save question
-        }
-        if (result.title && result.title.length > 0) {
-            multi.hSet(metaKey, {title: result.title}); // save title
-        }
-
-        // update status
-        await multi
-            .eval(SET_STATUS_LUA_SCRIPT, {
-                keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
-                arguments: ["GENERATING", "DONE"],
-            })
-            .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
-                status: "DONE"
-            }))
-            .exec();
     } catch (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
         if (await checkCanceled()) return;

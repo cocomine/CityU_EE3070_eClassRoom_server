@@ -39,19 +39,27 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
     const courseId = crypto.randomUUID(); // Gen UUID
 
     try {
-        // save in redis
-        await RedisClient.hSet("courses", courseId, name);
-
+        await DB.exec("BEGIN");
         // save ih DB
         const stmt = await DB.prepare("INSERT INTO courses (id, name) VALUES (?, ?)");
         await stmt.bind(courseId, name);
         await stmt.run();
         await stmt.finalize();
-        res.json({code: 200, message: "Course created successfully", data: {courseId}});
+
+        // save in redis
+        await RedisClient.hSet("courses", courseId, name);
+        await DB.exec("COMMIT");
     } catch (err) {
-        res.status(500).json({code: 500, message: "Course created failed"});
-        console.error(err);
+        logger.error(err);
+        try {
+            await DB.exec("ROLLBACK");
+        } catch (e) {
+            // Ignore rollback error
+        }
+        return res.status(500).json({code: 500, message: "Course created failed"});
     }
+
+    res.json({code: 200, message: "Course created successfully", data: {courseId}});
 });
 
 // path: /course/[courseId]/*

@@ -37,11 +37,23 @@ router.post("/", async (req: CourseQuestionRequest, res) => {
         });
     }
 
-    await RedisClient.multi()
-        .set(cancelKey, 1, {EX: 3600})
-        .hSet(metaKey, "status", "CANCELLED")
-        .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
-        .exec();
+    try {
+        await DB.exec("BEGIN");
+        await DB.run("UPDATE questions SET status = 3 WHERE ID = ?", [questionId]);
+        await RedisClient.multi()
+            .set(cancelKey, 1, {EX: 3600})
+            .hSet(metaKey, "status", "CANCELLED")
+            .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
+            .exec();
+        await DB.exec("COMMIT");
+    } catch (err) {
+        await DB.exec("ROLLBACK");
+        logger.error(err);
+        return res.status(500).json({
+            code: 500,
+            message: `Failed to request cancellation for question ${questionId}.`,
+        });
+    }
 
     // Immediate response
     res.status(202).json({
@@ -51,13 +63,6 @@ router.post("/", async (req: CourseQuestionRequest, res) => {
             status: "CANCELLED"
         }
     });
-
-    // set database
-    try {
-        await DB.run("UPDATE questions SET status = 3 WHERE ID = ?", [questionId]);
-    } catch (err) {
-        logger.error(err);
-    }
 
     // try to remove job
     const job = await QuestionGenerateTaskQueue.getJob(questionId);
