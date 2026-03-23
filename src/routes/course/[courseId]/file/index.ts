@@ -94,7 +94,7 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
         // save database
         await DB.exec("BEGIN");
         await DB.run("INSERT OR IGNORE INTO file_blob (sha256, blob, size, mime) VALUES (?, ?, ?, ?)", [sha256, file.buffer, file.size, mime]);
-        await DB.run("INSERT INTO files (ID, course_id, filename, sha256) VALUES (?, ?, ?, ?)", [fileId, courseId, filename, sha256]);
+        await DB.run("INSERT INTO files VALUES (?, ?, ?, ?)", [fileId, courseId, filename, sha256]);
 
         // save redis
         await RedisClient.multi()
@@ -103,7 +103,8 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
                 courseId,
                 mime,
                 filename,
-                sha256
+                sha256,
+                size: file.size
             })
             .sAdd(filesKey, fileId)
             .exec();

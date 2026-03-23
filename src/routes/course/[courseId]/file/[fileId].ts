@@ -57,7 +57,7 @@ router.delete("/", async (req: CourseFileRequest, res) => {
         }
 
         // delete
-        await DB.run("DELETE FROM files WHERE ID = ? AND course_ID = ?;", [fileId, courseId]);
+        await DB.run("DELETE FROM files WHERE ID = ?", [fileId, courseId]);
         await DB.run(
             `DELETE
              FROM file_blob

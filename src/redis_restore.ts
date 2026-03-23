@@ -20,12 +20,24 @@ export interface SQLQuestionsList {
     question: string;
 }
 
-export async function restoreRedis() {
-    // restore courses
-    await restoreCourses();
+export interface SQLFiles {
+    ID: string;
+    courseID: string;
+    filename: string;
+    sha256: string;
+}
 
-    // restore questions
+export interface SQLFileBlob {
+    sha256: string;
+    mime: string;
+    blob: Buffer;
+    size: number;
+}
+
+export async function restoreRedis() {
+    await restoreCourses();
     await restoreQuestions();
+    await restoreFiles();
 }
 
 /**
@@ -90,5 +102,31 @@ async function restoreQuestions() {
                 }
             });
         }
+    }
+}
+
+async function restoreFiles() {
+    const files = await DB.all<SQLFiles[]>("SELECT * FROM files");
+    for (let file of files) {
+        const {ID, courseID, sha256, filename} = file;
+        const filesKey = `course:${courseID}:file`;
+        const metaKey = `course:${courseID}:file:${ID}:meta`;
+        const results =
+            await DB.get<Pick<SQLFileBlob, "mime" | "size">>("SELECT mime, size FROM file_blob WHERE sha256 = ?", [sha256]);
+
+        if (!results) continue; // if not found, skip
+
+        // save redis
+        await RedisClient.multi()
+            .hSet(metaKey, {
+                fileId: ID,
+                courseId: courseID,
+                mime: results.mime,
+                filename,
+                sha256,
+                size: results.size
+            })
+            .sAdd(filesKey, ID)
+            .exec();
     }
 }
