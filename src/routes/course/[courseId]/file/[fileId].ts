@@ -42,17 +42,29 @@ router.delete("/", async (req: CourseFileRequest, res) => {
 
     try {
         await DB.exec("BEGIN");
-        // delete database
-        const deleteResult = await DB.run("DELETE FROM files WHERE ID = ?;", [fileId]);
-        if ((deleteResult.changes ?? 0) === 0) {
+        const file = await DB.get<{ sha256: string }>(
+            "SELECT sha256 FROM files WHERE ID = ? AND course_ID = ? LIMIT 1;",
+            [fileId, courseId]
+        );
+
+        // if not in database
+        if (!file) {
+            await DB.exec("ROLLBACK");
             return res.status(404).json({
                 code: 404,
                 message: `File ${fileId} not found in database.`
             });
         }
 
-        // remove file blob from database when no more record point
-
+        // delete
+        await DB.run("DELETE FROM files WHERE ID = ? AND course_ID = ?;", [fileId, courseId]);
+        await DB.run(
+            `DELETE
+             FROM file_blob
+             WHERE sha256 = ?
+               AND NOT EXISTS (SELECT 1 FROM files WHERE sha256 = ?);`,
+            [file.sha256, file.sha256]
+        );
 
         // delete redis
         await RedisClient.multi()
