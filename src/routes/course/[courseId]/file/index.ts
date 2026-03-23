@@ -34,7 +34,26 @@ const upload = multer({
 // path: /course/[courseId]/file/
 // GET: list all uploaded files
 router.get("/", async (req: CourseRequest, res) => {
-    //todo
+    const {courseId} = req.params;
+    const filesKey = `course:${courseId}:file`;
+    const metaList = [];
+
+    // check exists
+    if (await RedisClient.exists(filesKey) === 0) {
+        return res.status(404).json({code: 404, message: `No any files found in course ${courseId}.`});
+    }
+
+    // get all file meta
+    const fileIdList = await RedisClient.sMembers(filesKey);
+    for (let fileId of fileIdList) {
+        const metaKey = `course:${courseId}:file:${fileId}:meta`;
+        const meta = await RedisClient.hGetAll(metaKey);
+
+        if (Object.keys(meta).length === 0) continue;
+        metaList.push(meta);
+    }
+
+    res.json({code: 200, message: "All file meta get successfully.", data: metaList});
 });
 
 // path: /course/[courseId]/file/
@@ -44,7 +63,7 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
 
     // check is multipart/form-data
     if (req.header("content-type")?.includes("multipart/form-data") === false) {
-        return res.status(400).json({code: 400, message: "Content-Type must be multipart/form-data"});
+        return res.status(415).json({code: 415, message: "Content-Type must be multipart/form-data"});
     }
 
     // check have file upload
@@ -64,7 +83,7 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
         }
     }
 
-    // save database
+    // keys
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
     const fileId = crypto.randomUUID();
     const filename = xss(file.originalname);
@@ -72,8 +91,8 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
     const metaKey = `course:${courseId}:file:${fileId}:meta`;
 
     try {
-        await DB.exec("BEGIN");
         // save database
+        await DB.exec("BEGIN");
         await DB.run("INSERT OR IGNORE INTO file_blob (sha256, blob, size, mime) VALUES (?, ?, ?, ?)", [sha256, file.buffer, file.size, mime]);
         await DB.run("INSERT INTO files (ID, course_id, filename, sha256) VALUES (?, ?, ?, ?)", [fileId, courseId, filename, sha256]);
 
