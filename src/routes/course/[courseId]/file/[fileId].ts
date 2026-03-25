@@ -41,29 +41,20 @@ router.delete("/", async (req: CourseFileRequest, res) => {
     const metaKey = `course:${courseId}:file:${fileId}:meta`;
 
     try {
-        await DB.exec("BEGIN");
-        const file = await DB.get<{ sha256: string }>(
-            "SELECT sha256 FROM files WHERE ID = ? AND courseID = ? LIMIT 1;",
-            [fileId, courseId]
-        );
-
-        // if not in database
-        if (!file) {
-            await DB.exec("ROLLBACK");
-            return res.status(404).json({
-                code: 404,
-                message: `File ${fileId} not found in database.`
-            });
+        const sha256 = await RedisClient.hGet(metaKey, "sha256");
+        if (!sha256) {
+            return res.status(404).json({code: 404, message: `File ${fileId} not found in course ${courseId}.`});
         }
 
         // delete
+        await DB.exec("BEGIN");
         await DB.run("DELETE FROM files WHERE ID = ?", [fileId]);
         await DB.run(
             `DELETE
              FROM file_blob
              WHERE sha256 = ?
                AND NOT EXISTS (SELECT 1 FROM files WHERE sha256 = ?);`,
-            [file.sha256, file.sha256]
+            [sha256, sha256]
         );
 
         // delete redis
