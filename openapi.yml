@@ -1,0 +1,891 @@
+openapi: 3.0.3
+info:
+  title: EE3070 Project Server API
+  version: 1.0.0
+  description: |
+    OpenAPI 規格依據目前 `src/routes` 的實際實作整理。
+    主要功能包含課程、檔案上傳、題目產生任務、取消與狀態串流 (SSE)。
+servers:
+  - url: http://localhost:3001
+    description: Local development
+tags:
+  - name: System
+  - name: Classroom
+  - name: Courses
+  - name: Files
+  - name: Questions
+
+paths:
+  /:
+    get:
+      tags: [ System ]
+      summary: Home
+      operationId: getHome
+      responses:
+        '200':
+          description: Home message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeResponse'
+              example:
+                code: 200
+                message: "This is home page! Use '/course' or '/classroom'"
+
+  /ping:
+    get:
+      tags: [ System ]
+      summary: Health check
+      operationId: getPing
+      responses:
+        '200':
+          description: Pong
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingResponse'
+              example:
+                code: 200
+                message: pong
+
+  /classroom:
+    get:
+      tags: [ Classroom ]
+      summary: Get classroom environment data
+      operationId: getClassroom
+      responses:
+        '200':
+          description: Classroom data placeholder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassroomResponse'
+              example:
+                code: 200
+                message: This is classroom environment data!
+
+  /course:
+    get:
+      tags: [ Courses ]
+      summary: List courses
+      operationId: listCourses
+      responses:
+        '200':
+          description: Course list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [ Courses ]
+      summary: Create course
+      operationId: createCourse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourseCreateRequest'
+            example:
+              name: Introduction to Biology
+      responses:
+        '200':
+          description: Course created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}:
+    get:
+      tags: [ Courses ]
+      summary: Get course info
+      operationId: getCourse
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+      responses:
+        '200':
+          description: Course info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseInfoResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /course/{courseId}/file:
+    get:
+      tags: [ Files ]
+      summary: List uploaded files in a course
+      operationId: listCourseFiles
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+      responses:
+        '200':
+          description: File metadata list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [ Files ]
+      summary: Upload file to course
+      operationId: uploadCourseFile
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ file ]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResponse'
+        '400':
+          description: Invalid payload or multer/file validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                no_file:
+                  value:
+                    code: 400
+                    message: No file uploaded
+                invalid_type:
+                  value:
+                    code: 400
+                    message: Does not support audio!
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}/file/{fileId}:
+    delete:
+      tags: [ Files ]
+      summary: Delete file
+      operationId: deleteCourseFile
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: File deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileDeleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}/question:
+    get:
+      tags: [ Questions ]
+      summary: List question metadata in a course
+      operationId: listCourseQuestions
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+      responses:
+        '200':
+          description: Question metadata list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [ Questions ]
+      summary: Create question generation task
+      operationId: createQuestionTask
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuestionCreateRequest'
+            example:
+              clientTaskId: e0eb839a-b682-44e5-8e06-85a4a5ef16f1
+              prompt: Please generate any 4 understanding-check questions.
+      responses:
+        '201':
+          description: New question generation task enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionCreateResponse'
+        '202':
+          description: Idempotency hit; existing task id returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionCreateDuplicateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}/question/{questionId}:
+    get:
+      tags: [ Questions ]
+      summary: Get question result or current status
+      operationId: getQuestion
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+      responses:
+        '200':
+          description: Question generation finished (DONE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionDoneResponse'
+        '202':
+          description: Question not ready yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionNotReadyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [ Questions ]
+      summary: Update question visibility (public/private)
+      operationId: updateQuestionVisibility
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuestionVisibilityUpdateRequest'
+            example:
+              visibility: public
+      responses:
+        '200':
+          description: Visibility updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionVisibilityUpdateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Question status is not DONE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionStatusConflictResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [ Questions ]
+      summary: Delete question
+      operationId: deleteQuestion
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+      responses:
+        '200':
+          description: Question deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionDeleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Question is still processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionStatusConflictResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}/question/{questionId}/cancel:
+    post:
+      tags: [ Questions ]
+      summary: Cancel question generation
+      operationId: cancelQuestion
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionCancelAcceptedResponse'
+        '200':
+          description: |
+            Current implementation returns HTTP 200 with `code: 410`
+            when question is already in terminal status (DONE/ERROR/CANCELLED/STALE).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionCancelTerminalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /course/{courseId}/question/{questionId}/stream:
+    get:
+      tags: [ Questions ]
+      summary: Stream question status by SSE
+      description: |
+        Emits `event: status` with payload:
+        `{"questionId":"...","status":"PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE"}`.
+        When status is DONE and title exists, it also emits `event: delta` with
+        `{"questionId":"...","title":"..."}`.
+      operationId: streamQuestionStatus
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: status
+                data: {"questionId":"829c0cf0-791c-43f4-9e55-dc4d27f68d63","status":"PENDING"}
+
+                event: status
+                data: {"questionId":"829c0cf0-791c-43f4-9e55-dc4d27f68d63","status":"GENERATING"}
+
+                event: delta
+                data: {"questionId":"829c0cf0-791c-43f4-9e55-dc4d27f68d63","title":"Understanding Java Exceptions"}
+
+                event: status
+                data: {"questionId":"829c0cf0-791c-43f4-9e55-dc4d27f68d63","status":"DONE"}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    CourseIdPath:
+      name: courseId
+      in: path
+      required: true
+      description: Course UUID
+      schema:
+        type: string
+        format: uuid
+    FileIdPath:
+      name: fileId
+      in: path
+      required: true
+      description: File UUID
+      schema:
+        type: string
+        format: uuid
+    QuestionIdPath:
+      name: questionId
+      in: path
+      required: true
+      description: Question UUID
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: 400
+            message: Invalid request
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: 404
+            message: Resource not found
+    UnsupportedMediaType:
+      description: Unsupported media type
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: 415
+            message: Content-Type must be multipart/form-data
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: 500
+            message: Internal server error
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+
+    HomeResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+
+    PingResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: pong
+
+    ClassroomResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+
+    Course:
+      type: object
+      required: [ id, name ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+    CourseCreateRequest:
+      type: object
+      required: [ name ]
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    CourseListResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Course list retrieved successfully
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Course'
+
+    CourseCreateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Course created successfully
+        data:
+          type: object
+          required: [ courseId ]
+          properties:
+            courseId:
+              type: string
+              format: uuid
+
+    CourseInfoResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Course info retrieved successfully
+        data:
+          $ref: '#/components/schemas/Course'
+
+    FileMeta:
+      type: object
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        mime:
+          type: string
+        filename:
+          type: string
+        sha256:
+          type: string
+        size:
+          oneOf:
+            - type: integer
+            - type: string
+
+    FileListResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: All file meta get successfully.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileMeta'
+
+    FileUploadResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: File uploaded successfully
+        data:
+          type: object
+          required: [ fileId, courseId, mime, filename, sha256 ]
+          properties:
+            fileId:
+              type: string
+              format: uuid
+            courseId:
+              type: string
+              format: uuid
+            mime:
+              type: string
+            filename:
+              type: string
+            sha256:
+              type: string
+
+    FileDeleteResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: File ec4bf3cf-4bf5-4bf1-8d70-3303190f5b74 is deleted.
+
+    QuestionStatus:
+      type: string
+      enum: [ PENDING, GENERATING, DONE, ERROR, CANCELLED, STALE ]
+
+    QuestionMeta:
+      type: object
+      properties:
+        visibility:
+          oneOf:
+            - type: string
+              enum: [ '0', '1', 'public', 'private' ]
+            - type: integer
+              enum: [ 0, 1 ]
+        createAt:
+          type: string
+          description: ISO-8601 string or empty string
+        finishedAt:
+          type: string
+          description: ISO-8601 string or empty string
+        errorMessage:
+          type: string
+        questionId:
+          type: string
+          format: uuid
+        updateAt:
+          type: string
+        startAt:
+          type: string
+          description: ISO-8601 string or empty string
+        title:
+          type: string
+        prompt:
+          type: string
+        status:
+          $ref: '#/components/schemas/QuestionStatus'
+        courseId:
+          type: string
+          format: uuid
+      required:
+        - questionId
+        - courseId
+        - status
+
+    QuestionListResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: All question meta get successfully.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionMeta'
+
+    QuestionCreateRequest:
+      type: object
+      required: [ clientTaskId ]
+      properties:
+        clientTaskId:
+          type: string
+          format: uuid
+        prompt:
+          type: string
+          nullable: true
+
+    QuestionCreateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 201
+        message:
+          type: string
+          example: Question generate request enqueued.
+        data:
+          type: object
+          required: [ questionId, title, status ]
+          properties:
+            questionId:
+              type: string
+              format: uuid
+            title:
+              type: string
+            status:
+              type: string
+              enum: [ PENDING ]
+
+    QuestionCreateDuplicateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+          example: Request already receive
+        data:
+          type: object
+          required: [ questionId ]
+          properties:
+            questionId:
+              type: string
+              format: uuid
+
+    QuestionDoneResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          required: [ meta, question, mark ]
+          properties:
+            meta:
+              $ref: '#/components/schemas/QuestionMeta'
+            question:
+              type: array
+              nullable: true
+              items:
+                type: string
+            mark:
+              type: object
+              nullable: true
+              additionalProperties: true
+
+    QuestionNotReadyResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+        data:
+          type: object
+          required: [ meta ]
+          properties:
+            meta:
+              $ref: '#/components/schemas/QuestionMeta'
+
+    QuestionVisibilityUpdateRequest:
+      type: object
+      required: [ visibility ]
+      properties:
+        visibility:
+          type: string
+          enum: [ public, private ]
+
+    QuestionVisibilityUpdateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          required: [ visibility ]
+          properties:
+            visibility:
+              type: string
+              enum: [ public, private ]
+
+    QuestionStatusConflictResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 409
+        message:
+          type: string
+        data:
+          type: object
+          required: [ status ]
+          properties:
+            status:
+              $ref: '#/components/schemas/QuestionStatus'
+
+    QuestionDeleteResponse:
+      type: object
+      required: [ code, message ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+
+    QuestionCancelAcceptedResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+        data:
+          type: object
+          required: [ status ]
+          properties:
+            status:
+              type: string
+              enum: [ CANCELLED ]
+
+    QuestionCancelTerminalResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 410
+        message:
+          type: string
+        data:
+          type: object
+          required: [ status ]
+          properties:
+            status:
+              $ref: '#/components/schemas/QuestionStatus'
