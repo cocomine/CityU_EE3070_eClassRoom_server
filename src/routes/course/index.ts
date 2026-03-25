@@ -15,14 +15,17 @@ export interface PostCourseBody {
 // path: /course
 // GET: list course
 router.get("/", async (req, res) => {
-    const courses = await RedisClient.hGetAll("courses");
-
-    if (Object.keys(courses).length === 0) {
+    const courses = await RedisClient.sMembers("courses");
+    if (courses.length === 0) {
         return res.status(404).json({code: 404, message: "No courses found."});
     }
 
-    const courseList = Object.entries(courses).map(([id, name]) => ({id, name}));
-    res.json({code: 200, message: "Course list retrieved successfully", data: courseList});
+    const metaList = [];
+    for (let courseId of courses) {
+        console.log();
+        metaList.push({id: courseId, ...await RedisClient.hGetAll(`courses:${courseId}:meta`)});
+    }
+    res.json({code: 200, message: "Course list retrieved successfully", data: metaList});
 });
 
 // path: /course
@@ -37,29 +40,28 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
 
     name = xss(name).trim(); // xss clean
     const courseId = crypto.randomUUID(); // Gen UUID
+    let digitId = Math.floor(Math.random() * 999999) + 1;
+    const digitIdStr = digitId.toString().padStart(6, "0");
 
     try {
         await DB.exec("BEGIN");
         // save ih DB
-        const stmt = await DB.prepare("INSERT INTO courses (id, name) VALUES (?, ?)");
-        await stmt.bind(courseId, name);
+        const stmt = await DB.prepare("INSERT INTO courses (id, name, digit_id) VALUES (?, ?, ?)");
+        await stmt.bind(courseId, name, digitIdStr);
         await stmt.run();
         await stmt.finalize();
 
         // save in redis
-        await RedisClient.hSet("courses", courseId, name);
+        await RedisClient.sAdd("courses", courseId);
+        await RedisClient.hSet(`courses:${courseId}:meta`, {courseId, name, digitId: digitIdStr});
         await DB.exec("COMMIT");
     } catch (err) {
         logger.error(err);
-        try {
-            await DB.exec("ROLLBACK");
-        } catch (e) {
-            // Ignore rollback error
-        }
+        await DB.exec("ROLLBACK");
         return res.status(500).json({code: 500, message: "Course created failed"});
     }
 
-    res.json({code: 200, message: "Course created successfully", data: {courseId}});
+    res.json({code: 200, message: "Course created successfully", data: {courseId, digitId: digitIdStr}});
 });
 
 // path: /course/[courseId]/*

@@ -21,7 +21,7 @@ router.use(async (req: CourseRequest, res, next) => {
     }
 
     // get form redis
-    const course = await RedisClient.hExists("courses", courseId);
+    const course = await RedisClient.sIsMember("courses", courseId);
     if (course === 0) {
         return res.status(404).json({code: 404, message: "No course found."});
     }
@@ -38,12 +38,12 @@ router.get("/", async (req: CourseRequest, res) => {
     const courseId = req.params.courseId;
 
     // get form redis
-    const course = await RedisClient.hGet("courses", courseId);
+    const course = await RedisClient.hGetAll(`courses:${courseId}:meta`);
     if (!course) {
         return res.status(404).json({code: 404, message: "No course found."});
     }
 
-    res.json({code: 200, message: "Course info retrieved successfully", data: {id: courseId, name: course}});
+    res.json({code: 200, message: "Course info retrieved successfully", data: course});
 });
 
 // path: /course/[courseId]/question/*

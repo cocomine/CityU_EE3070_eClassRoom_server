@@ -5,6 +5,7 @@ import {QuestionGenerateTaskQueue} from "./utils/QuestionGenerateQueue";
 export interface Course {
     ID: string;
     name: string;
+    digit_id: string;
 }
 
 export interface SQLQuestions {
@@ -47,7 +48,12 @@ async function restoreCourses() {
     const courses = await DB.all<Course[]>("SELECT * FROM courses");
     const redisMulti = RedisClient.multi();
     courses.forEach(course => {
-        redisMulti.hSet("courses", course.ID, course.name);
+        redisMulti.sAdd("courses", course.ID);
+        redisMulti.hSet(`courses:${course.ID}:meta`, {
+            courseId: course.ID,
+            name: course.name,
+            digitId: course.digit_id
+        });
     });
     await redisMulti.exec();
 }
