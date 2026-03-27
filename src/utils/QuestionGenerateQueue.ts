@@ -5,6 +5,7 @@ import axios, {AxiosError} from "axios";
 import {DB} from "../sql_service";
 import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
 import xss from "xss";
+import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 
 /**
  * QuestionGenerateJobDate defines the data structure for a job in the question generation queue. Each job contains:
@@ -24,17 +25,17 @@ export interface GeneratedQuestionSet {
 }
 
 export interface ChatMessageContentItemFile {
-    type: "file",
+    type: "file" | string,
     file: {
-        file_data: `data:${string};base64,${string}`,
-        filename: string
+        file_data: string,
+        filename?: string
     }
 }
 
 export interface ChatMessageContentItemImage {
     type: "image_url",
     image_url: {
-        url: `data:${string};base64,${string}`,
+        url: string,
         detail: "auto" | "low" | "high"
     }
 }
@@ -115,10 +116,11 @@ interface OpenRouterUsage {
     cost_details?: Record<string, number>;
     completion_tokens_details?: Record<string, number>;
 }
+
 /* ===== penRouterChatCompletionResponse Type End ===== */
 
 /* ==== Prompt === */
-const SYSTEM_PROMPT = `
+export const SYSTEM_PROMPT = `
 You are “Classroom Checkpoint Tutor”, an assistant that helps a teacher assess student understanding of the lesson content provided to you.
 
 Core rules:
@@ -155,10 +157,22 @@ QUESTION REQUIREMENTS:
 
 MATERIAL:
 - All materials have been placed in the files.
+- You must read the provided files.
 
 OTHER REQUIREMENTS:
 - Markdown Support.
 -`;
+
+// S3 Config
+export const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL;
+export const S3_ENDPOINT = process.env.S3_ENDPOINT;
+export const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID;
+export const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY;
+
+// Check not undefined
+if (!S3_SECRET_ACCESS_KEY || !S3_PUBLIC_URL || !S3_ACCESS_KEY_ID || !S3_ENDPOINT) {
+    throw new Error("S3 configuration is missing. Please set S3_PUBLIC_URL, S3_ENDPOINT, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY environment variables.");
+}
 
 const connection: ConnectionOptions = {
     url: REDIS_URL
@@ -166,6 +180,14 @@ const connection: ConnectionOptions = {
 const QuestionGenerateTaskQueue = new Queue("QuestionGenerateTaskQueue", {connection});
 const QuestionGenerateTaskQueueEvents = new QueueEvents("QuestionGenerateTaskQueue", {connection});
 const logger = getLogger("/utils/QuestionGenerateQueue");
+const S3 = new S3Client({
+    region: "auto",
+    endpoint: S3_ENDPOINT,
+    credentials: {
+        accessKeyId: S3_ACCESS_KEY_ID,
+        secretAccessKey: S3_SECRET_ACCESS_KEY,
+    },
+});
 
 /**
  * GenerateTaskQueueWorker processes jobs from the "QuestionGenerateTaskQueue".
@@ -220,36 +242,44 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
 
     // get all files in course
     const fileList: ChatMessageContent[] = [];
-    await DB.each<{
+    const SqlResult = await DB.all<{
         mime: string,
         blob: Buffer,
-        filename: string
-    }>("SELECT fb.mime, fb.blob, f.filename FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId],
-        (err, row) => {
-            if (err) throw err;
-            const base64 = row.blob.toString("base64");
+        filename: string,
+        sha256: string
+    }[]>("SELECT fb.mime, fb.blob, f.filename, fb.sha256 FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId]);
+    for (let row of SqlResult) {
+        // upload to CF R2
+        const response = await S3.send(
+            new PutObjectCommand({
+                Bucket: "ee3070",
+                Key: row.sha256,
+                Body: row.blob,
+                ContentType: row.mime,
+            }),
+        );
+        console.debug(response);
 
-            if (row.mime.includes("image/")) {
-                // image file
-
-                fileList.push({
-                    type: "image_url",
-                    image_url: {
-                        url: `data:${row.mime};base64,${base64}`,
-                        detail: "high"
-                    }
-                });
-            } else {
-                // other file
-                fileList.push({
-                    type: "file",
-                    file: {
-                        file_data: `data:${row.mime};base64,${base64}`,
-                        filename: row.filename
-                    }
-                });
-            }
-        });
+        if (row.mime.includes("image/")) {
+            // image file
+            fileList.push({
+                type: "image_url",
+                image_url: {
+                    url: S3_PUBLIC_URL + row.sha256,
+                    detail: "high"
+                }
+            });
+        } else {
+            // other file
+            fileList.push({
+                type: "file",
+                file: {
+                    file_data: S3_PUBLIC_URL + row.sha256,
+                    filename: row.filename
+                }
+            });
+        }
+    }
 
     // call LLM
     let result: GeneratedQuestionSet;
@@ -257,6 +287,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
         stream: false,
         temperature: 0.5,
+        session_id: courseId,
         top_p: 0.9,
         reasoning: {effort: "medium"},
         modalities: ["text"],
@@ -291,7 +322,14 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 }
             }
         },
-        plugins: [{id: "response-healing"}],
+        plugins: [{
+            id: "response-healing"
+        }, {
+            id: "file-parser",
+            pdf: {
+                engine: "native",
+            },
+        }],
         messages: [{
             role: "system",
             content: SYSTEM_PROMPT
@@ -396,6 +434,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         // if status is "CANCELLED"
         if (await checkCanceled()) return;
 
+
         // if attempts >= 5
         if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
             // update status
@@ -433,7 +472,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             }));
         }
 
-        logger.error(err);
+        logger.error(err.response.data);
         throw err;
     } finally {
         clearInterval(heartbeat);
