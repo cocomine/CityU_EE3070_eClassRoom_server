@@ -202,12 +202,12 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     logger.info(`Processing question generate task. courseId: ${courseId}, taskId: ${questionId}, prompt: ${prompt}, attempt: ${job.attemptsStarted}`);
 
     // heartbeat to prevent stale
+    await RedisClient.set(hbKey, new Date().toISOString(), {EX: 60});
     const heartbeat = setInterval(async () => {
         await RedisClient.set(hbKey, new Date().toISOString(), {
             EX: 60
         });
     }, 3000);
-
     /**
      * Check status is canceled
      * @return true = canceled, false = not canceled
