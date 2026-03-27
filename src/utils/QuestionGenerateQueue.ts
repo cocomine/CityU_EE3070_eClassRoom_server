@@ -307,7 +307,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         }]
     };
     try {
-        const res = await axios.post<OpenRouterChatCompletionResponse>("https://openrouter.ai/api/v1/chat/completions", requestBody, {
+        const res = await axios.post<OpenRouterChatCompletionResponse>("https://nginx-253730240080.us-central1.run.app/chat/completions", requestBody, {
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`

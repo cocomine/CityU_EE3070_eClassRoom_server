@@ -86,7 +86,7 @@ router.post("/", upload.single("file"), async (req: CourseRequest, res: Response
     // keys
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
     const fileId = crypto.randomUUID();
-    const filename = xss(file.originalname);
+    const filename = xss(decodeURIComponent(file.originalname));
     const filesKey = `course:${courseId}:file`;
     const metaKey = `course:${courseId}:file:${fileId}:meta`;
 
