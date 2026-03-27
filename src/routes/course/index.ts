@@ -23,7 +23,7 @@ router.get("/", async (req, res) => {
     const metaList = [];
     for (let courseId of courses) {
         console.log();
-        metaList.push({id: courseId, ...await RedisClient.hGetAll(`courses:${courseId}:meta`)});
+        metaList.push(await RedisClient.hGetAll(`courses:${courseId}:meta`));
     }
     res.json({code: 200, message: "Course list retrieved successfully", data: metaList});
 });
@@ -34,13 +34,13 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
     let name = req.body?.name;
 
     // Check required fields
-    if (!name) {
+    if (!name || name === "") {
         return res.status(400).json({code: 400, message: "Course name is required"});
     }
 
     name = xss(name).trim(); // xss clean
     const courseId = crypto.randomUUID(); // Gen UUID
-    let digitId = Math.floor(Math.random() * 999999) + 1;
+    let digitId = Math.floor(Math.random() * 999999) + 1;//todo
     const digitIdStr = digitId.toString().padStart(6, "0");
 
     try {
@@ -61,7 +61,7 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
         return res.status(500).json({code: 500, message: "Course created failed"});
     }
 
-    res.json({code: 200, message: "Course created successfully", data: {courseId, digitId: digitIdStr}});
+    res.json({code: 200, message: "Course created successfully", data: {courseId, digitId: digitIdStr, name}});
 });
 
 // path: /course/[courseId]/*

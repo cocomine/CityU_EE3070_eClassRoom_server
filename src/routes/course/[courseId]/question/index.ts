@@ -38,7 +38,7 @@ router.get("/", async (req: CourseRequest, res) => {
         const meta = await RedisClient.hGetAll(metaKey);
 
         if (Object.keys(meta).length === 0) continue;
-        metaList.push(meta);
+        metaList.push({...meta, visibility: parseInt(meta.visibility ?? "0")});
     }
 
     res.json({code: 200, message: "All question meta get successfully.", data: metaList});

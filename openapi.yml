@@ -76,6 +76,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CourseListResponse'
+              example:
+                code: 200
+                message: Course list retrieved successfully
+                data:
+                  - courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    name: Test Course2
+                    digitId: "000001"
+                  - courseId: 9b58e4d1-4ae3-4f60-94bd-04e63fc6be44
+                    name: Test Course1
+                    digitId: "000002"
         '404':
           $ref: '#/components/responses/NotFound'
     post:
@@ -97,6 +107,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CourseCreateResponse'
+              example:
+                code: 200
+                message: Course created successfully
+                data:
+                  courseId: 9b58e4d1-4ae3-4f60-94bd-04e63fc6be44
+                  digitId: "000002"
+                  name: Test Course1
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':
@@ -116,6 +133,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CourseInfoResponse'
+              example:
+                code: 200
+                message: Course info retrieved successfully
+                data:
+                  courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                  name: Test Course2
+                  digitId: "000001"
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -518,15 +542,22 @@ components:
         message:
           type: string
 
-    Course:
+    CourseItem:
       type: object
-      required: [ id, name ]
+      required: [ name, digitId ]
       properties:
         id:
           type: string
           format: uuid
+          description: Legacy field (may still appear in old cached records)
+        courseId:
+          type: string
+          format: uuid
         name:
           type: string
+        digitId:
+          type: string
+          pattern: '^\d{6}$'
 
     CourseCreateRequest:
       type: object
@@ -549,7 +580,7 @@ components:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/Course'
+            $ref: '#/components/schemas/CourseItem'
 
     CourseCreateResponse:
       type: object
@@ -563,11 +594,16 @@ components:
           example: Course created successfully
         data:
           type: object
-          required: [ courseId ]
+          required: [ courseId, digitId, name ]
           properties:
             courseId:
               type: string
               format: uuid
+            digitId:
+              type: string
+              pattern: '^\d{6}$'
+            name:
+              type: string
 
     CourseInfoResponse:
       type: object
@@ -580,7 +616,7 @@ components:
           type: string
           example: Course info retrieved successfully
         data:
-          $ref: '#/components/schemas/Course'
+          $ref: '#/components/schemas/CourseItem'
 
     FileMeta:
       type: object

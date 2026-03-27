@@ -64,7 +64,10 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
             code: 200,
             message: `Question ${questionId} is DONE.`,
             data: {
-                meta,
+                meta: {
+                    ...meta,
+                    visibility: parseInt(meta.visibility ?? "0")
+                },
                 question: result,
                 mark: null //TODO: student mark
             }
@@ -75,7 +78,10 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
             code: 202,
             message: `Question ${questionId} is not ready yet.`,
             data: {
-                meta
+                meta: {
+                    ...meta,
+                    visibility: parseInt(meta.visibility ?? "0")
+                },
             }
         });
     }
