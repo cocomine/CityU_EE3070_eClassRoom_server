@@ -1,6 +1,7 @@
 import {DB} from "./sql_service";
 import {RedisClient} from "./redis_service";
 import {QuestionGenerateTaskQueue} from "./utils/QuestionGenerateQueue";
+import {getLogger} from "log4js";
 
 export interface Course {
     ID: string;
@@ -39,6 +40,7 @@ export async function restoreRedis() {
     await restoreCourses();
     await restoreQuestions();
     await restoreFiles();
+    getLogger("RedisRestore").info("Redis restore completed.");
 }
 
 /**

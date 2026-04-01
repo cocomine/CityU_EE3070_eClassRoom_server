@@ -1,43 +1,43 @@
 {
-  "name": "ee3070-project-server",
-  "version": "1.0.0",
-  "description": "EE3070 Project Server",
-  "main": "index.js",
-  "scripts": {
-    "start": "nodemon src/index.ts",
-    "copy": "copy-files-from-to",
-    "build": "tsc --project ./ && yarn run copy"
-  },
-  "author": "cocomine",
-  "license": "LGPL-3.0-or-later",
-  "copyFiles": [],
-  "copyFilesSettings": {
-    "whenFileExists": "overwrite"
-  },
-  "dependencies": {
-      "@aws-sdk/client-s3": "^3.1018.0",
-    "axios": "^1.13.6",
-    "bullmq": "^5.71.0",
-    "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "figlet": "^1.11.0",
-      "file-type": "^21.3.4",
-    "log4js": "^6.9.1",
-      "multer": "^2.1.1",
-    "redis": "^5.11.0",
-    "sqlite": "^5.1.1",
-    "sqlite3": "5.1.6",
-    "xss": "^1.0.15"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/figlet": "^1.7.0",
-      "@types/multer": "^2",
-    "@types/node": "^25.5.0",
-    "copy-files-from-to": "^4.0.0",
-    "nodemon": "^3.1.14",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
-  },
-  "packageManager": "yarn@4.13.0"
+    "name": "ee3070-project-server",
+    "version": "1.0.0",
+    "description": "EE3070 Project Server",
+    "main": "index.js",
+    "scripts": {
+        "start": "nodemon src/index.ts",
+        "copy": "copy-files-from-to",
+        "build": "tsc --project ./ && yarn run copy"
+    },
+    "author": "cocomine",
+    "license": "LGPL-3.0-or-later",
+    "copyFiles": [],
+    "copyFilesSettings": {
+        "whenFileExists": "overwrite"
+    },
+    "dependencies": {
+        "@aws-sdk/client-s3": "^3.1018.0",
+        "axios": "^1.13.6",
+        "bullmq": "^5.71.0",
+        "dotenv": "^17.3.1",
+        "express": "^5.2.1",
+        "figlet": "^1.11.0",
+        "file-type": "^21.3.4",
+        "log4js": "^6.9.1",
+        "multer": "^2.1.1",
+        "redis": "^5.11.0",
+        "sqlite": "^5.1.1",
+        "sqlite3": "5.1.6",
+        "xss": "^1.0.15"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.6",
+        "@types/figlet": "^1.7.0",
+        "@types/multer": "^2",
+        "@types/node": "^25.5.0",
+        "copy-files-from-to": "^4.0.0",
+        "nodemon": "^3.1.14",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.3"
+    },
+    "packageManager": "yarn@4.13.0"
 }

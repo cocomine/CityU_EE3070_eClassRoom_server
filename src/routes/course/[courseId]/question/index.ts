@@ -17,12 +17,18 @@ export interface PostQuestionRequest extends CourseRequest {
     } | undefined;
 }
 
+export interface GetQuestionRequestQuery {
+    visibility?: "0" | "1" | string;
+    status?: "PENDING" | "GENERATING" | "DONE" | "ERROR" | "CANCELLED" | "STALE" | string;
+}
+
 /*=======router======*/
 
 // path: /course/[courseId]/question
 // GET: list question
 router.get("/", async (req: CourseRequest, res) => {
     const {courseId} = req.params;
+    const query: GetQuestionRequestQuery = req.query;
     const questionKey = `course:${courseId}:question`;
     const metaList = [];
 
@@ -38,6 +44,14 @@ router.get("/", async (req: CourseRequest, res) => {
         const meta = await RedisClient.hGetAll(metaKey);
 
         if (Object.keys(meta).length === 0) continue;
+
+        // filter
+        if (query.status) {
+            const t = query.status.split(":");
+            if (!t.includes(meta.status ?? "")) continue;
+        }
+        if (query.visibility && meta.visibility !== query.visibility) continue;
+
         metaList.push({...meta, visibility: parseInt(meta.visibility ?? "0")});
     }
 
@@ -83,7 +97,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // new task
-    const title = prompt === "" ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
+    const title = prompt !== "" ? prompt.slice(0, 100) : "New Question (" + questionId.slice(0, 8) + ")";
 
     try {
         await DB.exec("BEGIN");
