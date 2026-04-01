@@ -12,9 +12,9 @@ const logger = getLogger("/course/[courseId]/question");
 
 export interface PostQuestionRequest extends CourseRequest {
     body: {
-        prompt?: string | null;
-        clientTaskId?: string;
-    } | undefined;
+        prompt?: string | null | any;
+        clientTaskId?: string | any;
+    }
 }
 
 export interface GetQuestionRequestQuery {
@@ -62,9 +62,8 @@ router.get("/", async (req: CourseRequest, res) => {
 // POST: create question
 router.post("/", async (req: PostQuestionRequest, res) => {
     const courseId = req.params.courseId;
-    const prompt = xss(req.body?.prompt || "");
-    const clientTaskId = req.body?.clientTaskId;
-    const idemKey = `idem:question:${clientTaskId}`;
+    const prompt = xss(req.body.prompt || "").trim();
+    const clientTaskId = req.body.clientTaskId;
     const questionKey = `course:${courseId}:question`;
 
     // Check clientTaskId
@@ -73,7 +72,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     }
 
     // check clientTaskId format match UUID format
-    if (!clientTaskId || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(clientTaskId)) {
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(clientTaskId)) {
         return res.status(400).json({code: 400, message: "clientTaskId must use UUID format"});
     }
 
@@ -82,6 +81,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     const metaKey = `course:${courseId}:question:${questionId}:meta`;
 
     // Idempotency
+    const idemKey = `idem:question:${clientTaskId}`;
     const idem = await RedisClient.eval(SET_IDEM_LUA_SCRIPT, {
         keys: [idemKey],
         arguments: [questionId]

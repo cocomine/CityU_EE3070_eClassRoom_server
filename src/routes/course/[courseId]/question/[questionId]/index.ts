@@ -16,11 +16,12 @@ export interface CourseQuestionRequest extends CourseRequest {
 
 export interface PutCourseQuestionRequest extends CourseQuestionRequest {
     body: {
-        visibility?: "public" | "private";
+        visibility?: "public" | "private" | any;
     };
 }
 
 /*======middleware======*/
+// Check questionId format and existence in course, if not exist return 404.
 router.use(async (req: CourseQuestionRequest, res, next) => {
     const {courseId, questionId} = req.params;
 
@@ -231,5 +232,8 @@ logger.info("Loaded /course/[courseId]/question/[questionId]/cancel");
 router.use("/stream", require("./stream"));
 logger.info("Loaded /course/[courseId]/question/[questionId]/stream");
 
+// path: /course/[courseId]/question/[questionId]/reply/*
+router.use("/reply", require("./reply"));
+logger.info("Loaded /course/[courseId]/question/[questionId]/reply");
 
 module.exports = router;
