@@ -128,7 +128,7 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
                 content,
                 eid,
                 status: "PENDING",
-                score: 0, // 0-10 score
+                score: 0, // 0-100 score
                 createAt: new Date().toISOString(),
                 startAt: "",
                 finishedAt: "",
@@ -153,7 +153,6 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
 
     //todo: overwrite job
 
-
     // Enqueue Job
     await MarkingTaskQueue.add("MarkingTaskQueue", {
         questionId,
@@ -164,8 +163,8 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     }, {
         jobId: targetReplyId,
         removeOnComplete: true,
-        removeOnFail: true,
-        attempts: 20,
+        removeOnFail: false,
+        attempts: 5,
         backoff: {
             type: "exponential",
             delay: 1000,

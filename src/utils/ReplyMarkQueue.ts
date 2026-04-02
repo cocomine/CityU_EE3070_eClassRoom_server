@@ -23,7 +23,6 @@ export interface MarkingJobDate {
     replyId: string;
 }
 
-//todo
 export interface MarkedReplySet {
     score?: number;
     understanding_level?: "none" | "low" | "partial" | "good" | "excellent";
@@ -149,8 +148,45 @@ IMPORTANT:
 - If the student answer includes content not in LESSON EXCERPT, do not reward it.
 - Do not be harsh on grammar. Judge meaning.
 
+MATERIAL:
+- All materials have been placed in the files.
+
+QUESTION PACKAGE (authoritative):
+%Question%
+
 STUDENT ANSWER:
 `;
+const RESPONSE_FORMAT = {
+    type: "json_schema",
+    json_schema: {
+        name: "GradingResult",
+        strict: true,
+        schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["score", "understanding_level", "key_point_feedback", "one_sentence_summary", "next_step"],
+            properties: {
+                score: {type: "integer", minimum: 0, maximum: 100},
+                understanding_level: {type: "string", enum: ["none", "low", "partial", "good", "excellent"]},
+                key_point_feedback: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        additionalProperties: false,
+                        required: ["point", "status", "comment"],
+                        properties: {
+                            point: {type: "string"},
+                            status: {type: "string", enum: ["full", "partial", "missing"]},
+                            comment: {type: "string"}
+                        }
+                    }
+                },
+                one_sentence_summary: {"type": "string"},
+                next_step: {type: "string"}
+            }
+        }
+    }
+};
 
 // Check not undefined
 if (!S3_SECRET_ACCESS_KEY || !S3_PUBLIC_URL || !S3_ACCESS_KEY_ID || !S3_ENDPOINT) {
@@ -183,7 +219,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
     const hbKey = `course:${courseId}:question:${questionId}:reply:${replyId}:heartbeat`;
     const channelKey = `course:${courseId}:question:${questionId}:reply:${replyId}:status`;
     const resultKey = `course:${courseId}:question:${questionId}:reply:${replyId}:result`;
-    logger.info(`Processing reply marking task. courseId: ${courseId}, taskId: ${questionId}, subQuestionID: ${subQuestionID}, replyId: ${replyId}, attempt: ${job.attemptsStarted}`);
+    logger.info(`Processing reply marking task. courseId: ${courseId}, taskId: ${questionId}, subQuestionID: ${subQuestionId}, replyId: ${replyId}, attempt: ${job.attemptsStarted}`);
 
     // heartbeat to prevent stale
     await RedisClient.set(hbKey, new Date().toISOString(), {EX: 60});
@@ -271,42 +307,13 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
     const requestBody = {
         model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
         stream: false,
-        temperature: 0.5,
+        temperature: 0.2,
         session_id: courseId,
         top_p: 0.9,
         reasoning: {effort: "medium"},
         modalities: ["text"],
-        metadata: {courseId, questionId},
-        response_format: {
-            type: "json_schema",
-            json_schema: {
-                name: "QuestionSet",
-                strict: true,
-                schema: {
-                    type: "object",
-                    properties: {
-                        question: {
-                            type: "array",
-                            minItems: 4,
-                            maxItems: 4,
-                            items: {
-                                type: "string",
-                                minLength: 1
-                            },
-                            description: "Exactly 4 questions."
-                        },
-                        title: {
-                            type: "string",
-                            minLength: 1,
-                            maxLength: 500,
-                            description: "A short title about these 4 questions. Must be within 20 words."
-                        }
-                    },
-                    required: ["question", "title"],
-                    additionalProperties: false
-                }
-            }
-        },
+        metadata: {courseId, questionId, replyId},
+        response_format: RESPONSE_FORMAT,
         plugins: [{
             id: "response-healing"
         }, {
@@ -319,16 +326,20 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             role: "system",
             content: SYSTEM_PROMPT
         }, {
+            role: "system",
+            content: "You are a strict grader. Output JSON ONLY that matches the provided schema. No markdown, no extra text. Follow the scoring rubric exactly. Score must be an integer 0-100."
+        }, {
             role: "user",
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT + prompt + "\n--- NO MORE OTHER REQUIREMENTS ---"
+                    text: USER_PROMPT.replace("%Question%", "") + reply //todo
                 },
                 ...fileList
             ]
         }]
     };
+
     try {
         const res = await axios.post<OpenRouterChatCompletionResponse>("https://nginx-253730240080.us-central1.run.app/chat/completions", requestBody, {
             headers: {
@@ -337,7 +348,8 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             }
         });
 
-        if (await checkCanceled()) return;
+        if (await checkCanceled())
+            return;
         logger.debug(res.data.choices);
 
         // filter result
@@ -360,7 +372,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         if (await checkCanceled()) return;
 
         //todo
-        try {
+        /*try {
             await DB.exec("BEGIN");
             // save database
             const statusUpdate = await DB.run(`UPDATE questions
@@ -415,28 +427,56 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         } catch (err) {
             await DB.exec("ROLLBACK");
             throw err;
-        }
-    } catch (err: AxiosError | Error | any) {
+        }*/
+    } catch
+        (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
         if (await checkCanceled()) return;
 
-        // attempts < 5
-        await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
-            keys: [metaKey],
-            arguments: ["GENERATING", "PENDING"],
-        });
+        // if attempts >= 5
+        if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
+            // update status
+            await RedisClient.multi()
+                .eval(SET_STATUS_LUA_SCRIPT, {
+                    keys: [metaKey],
+                    arguments: ["GENERATING", "ERROR"],
+                })
+                .hSet(metaKey, {
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
+                    errorMessage: err.message
+                })
+                .exec();
 
-        // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
-        await RedisClient.publish(channelKey, JSON.stringify({
-            status: "PENDING"
-        }));
+            // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
+            await RedisClient.publish(channelKey, JSON.stringify({
+                status: "ERROR",
+            }));
+
+            // update DB
+            const stmt = await DB.prepare("UPDATE questions SET status = 2 WHERE id = ? AND status != 3");
+            await stmt.bind(questionId);
+            await stmt.run();
+        } else {
+            // attempts < 5
+            await RedisClient.eval(SET_STATUS_LUA_SCRIPT, {
+                keys: [metaKey],
+                arguments: ["GENERATING", "PENDING"],
+            });
+
+            // pub/sub: publish status to channel "course:{courseId}:question:{questionId}:status"
+            await RedisClient.publish(channelKey, JSON.stringify({
+                status: "PENDING"
+            }));
+        }
 
         logger.error(err.response.data);
         throw err;
+
     } finally {
         clearInterval(heartbeat);
     }
-}, {connection, concurrency: 1});
+}, {connection, concurrency: 2});
 
 /**
  * Shutdown the MarkingTaskQueue gracefully.
@@ -468,3 +508,6 @@ MarkingTaskQueueEvents.on("added", (job) => {
 });
 
 export {MarkingTaskQueue, MarkingTaskQueueEvents, shutdownMarkingTaskQueue};
+;
+;
+;
