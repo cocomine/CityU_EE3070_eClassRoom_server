@@ -8,6 +8,7 @@ import {closeDB, openDB} from "./sql_service";
 import {restoreRedis} from "./redis_restore";
 import {shutdownQuestionGenerateTaskQueue} from "./utils/QuestionGenerateQueue";
 import multer from "multer";
+import {shutdownMarkingTaskQueue} from "./utils/ReplyMarkQueue";
 
 const app: Application = express();
 const logger = log4js.getLogger("server");
@@ -102,6 +103,7 @@ function stop_server() {
         await closeDB();
         await disconnectRedis();
         await shutdownQuestionGenerateTaskQueue();
+        await shutdownMarkingTaskQueue();
 
         figlet.text("See ya!", {
             font: "ANSI Shadow",

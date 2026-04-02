@@ -3,14 +3,15 @@ import {getLogger} from "log4js";
 import {CourseQuestionRequest} from "../index";
 import {RedisClient} from "../../../../../../redis_service";
 import xss from "xss";
-import {SET_IDEM_LUA_SCRIPT} from "../../../../../../utils/LuaScript";
 import {DB} from "../../../../../../sql_service";
+import {MarkingTaskQueue} from "../../../../../../utils/ReplyMarkQueue";
 
 export interface PostCourseQuestionReplyRequest extends CourseQuestionRequest {
     body: {
         subQuestionId?: number | any;
         content?: string | any;
         clientTaskId?: string | any;
+        overwrite?: boolean | any;
     };
 }
 
@@ -34,13 +35,13 @@ router.use(async (req, res, next) => {
 // path: /course/[courseId]/question/[questionId]/reply
 // POST: student reply question
 router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
-    const eid = req.header("X-EID");
+    const eid = req.header("X-EID") as string;
     const {courseId, questionId} = req.params;
-    const subQuestionId = req.body.subQuestionId;
+    const {subQuestionId, clientTaskId, overwrite} = req.body;
     const content = xss(req.body?.content || "").trim();
-    const clientTaskId = req.body.clientTaskId;
     const resultKey = `course:${courseId}:question:${questionId}:result`;
     const replyKey = `course:${courseId}:question:${questionId}:reply`;
+    const studentKey = `student:${eid}:reply`;
 
     // validate input
     if (!subQuestionId || content === "") {
@@ -49,11 +50,8 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     if (typeof subQuestionId !== "number") {
         return res.status(400).json({code: 400, message: "Invalid subQuestionId fields"});
     }
-
-    // check sub question is exits
-    const subQuestion = await RedisClient.json.get(resultKey, {path: `$[${subQuestionId}]`}) as string[];
-    if (subQuestion.length <= 0) {
-        return res.status(404).json({code: 404, message: "Sub question not found"});
+    if (overwrite !== undefined && typeof overwrite !== "boolean") {
+        return res.status(400).json({code: 400, message: "Invalid overwrite fields"});
     }
 
     // Check clientTaskId
@@ -66,15 +64,28 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         return res.status(400).json({code: 400, message: "clientTaskId must use UUID format"});
     }
 
-    const replyId = crypto.randomUUID();
-    const metaKey = `course:${courseId}:question:${questionId}:reply:${replyId}:meta`;
+    // check sub question is exist
+    const subQuestion = await RedisClient.json.get(resultKey, {path: `$[${subQuestionId}]`}) as string[];
+    if (subQuestion.length <= 0) {
+        return res.status(404).json({code: 404, message: "Sub question not found"});
+    }
+
+    // check Conflict
+    if (!overwrite) {
+        const exist = await RedisClient.sIsMember(studentKey, questionId);
+        if (exist) {
+            return res.status(409).json({
+                code: 409,
+                message: "Conflict: You have already replied to this question. Please set overwrite to true if you want to overwrite the reply."
+            });
+        }
+    }
+
+    let targetReplyId = crypto.randomUUID();
 
     // Idempotency
     const idemKey = `idem:reply:${clientTaskId}`;
-    const idem = await RedisClient.eval(SET_IDEM_LUA_SCRIPT, {
-        keys: [idemKey],
-        arguments: [replyId]
-    });
+    const idem = await RedisClient.get(idemKey);
     if (idem) {
         // already have task
         return res.status(202).json({
@@ -88,11 +99,23 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     // save in database and redis
     try {
         await DB.exec("BEGIN");
-        // save database
+
+        // check for existing record and handle overwrite
+        if (overwrite) {
+            const existingReply = await DB.get("SELECT ID FROM reply WHERE questionID = ? AND subQuestionID = ? AND EID = ?", [questionId, subQuestionId, eid]);
+            if (existingReply) {
+                targetReplyId = existingReply.ID;
+                await DB.run("DELETE FROM reply WHERE ID = ?", targetReplyId);
+            }
+        }
+        const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
+        await RedisClient.set(idemKey, targetReplyId, {EX: 86400}); // set idem
+
+        // insert new
         const stmt = await DB.prepare(
-            `INSERT INTO reply (ID, questionID, subQuestionID, content)
-             VALUES (?, ?, ?, ?)`);
-        await stmt.bind(replyId, questionId, subQuestionId, content);
+            `INSERT INTO reply (ID, questionID, subQuestionID, EID, content)
+             VALUES (?, ?, ?, ?, ?)`);
+        await stmt.bind(targetReplyId, questionId, subQuestionId, eid, content);
         await stmt.run();
 
         // save meta
@@ -101,8 +124,9 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
                 courseId,
                 questionId,
                 subQuestionId,
-                replyId,
+                replyId: targetReplyId,
                 content,
+                eid,
                 status: "PENDING",
                 score: 0, // 0-10 score
                 createAt: new Date().toISOString(),
@@ -111,18 +135,42 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
                 errorMessage: "",
                 updateAt: new Date().toISOString()
             })
-            .sAdd(replyKey, replyId)
+            .sAdd(replyKey, targetReplyId) // this question's all reply
+            .sAdd(studentKey, questionId) // this student all repled question
             .exec();
         await DB.exec("COMMIT");
-    } catch (err) {
+    } catch (err: any) {
         await DB.exec("ROLLBACK");
-        logger.error(err);
-        return res.status(500).json({code: 500, message: "Failed to create question."});
+        logger.error("SQL Error:", err);
+        return res.status(500).json({code: 500, message: "Failed to create reply."});
     }
 
-    res.status(200).json({code: 200, message: "Reply question successfully."});
+    res.status(200).json({
+        code: 200, message: "Reply question successfully.", data: {
+            replyId: targetReplyId, status: "PENDING"
+        }
+    });
 
-    //todo: trigger auto grading task
+    //todo: overwrite job
+
+
+    // Enqueue Job
+    await MarkingTaskQueue.add("MarkingTaskQueue", {
+        questionId,
+        courseId,
+        subQuestionId,
+        reply: content,
+        replyId: targetReplyId
+    }, {
+        jobId: targetReplyId,
+        removeOnComplete: true,
+        removeOnFail: true,
+        attempts: 20,
+        backoff: {
+            type: "exponential",
+            delay: 1000,
+        }
+    });
 });
 
 // path: /course/[courseId]/question/[questionId]/reply

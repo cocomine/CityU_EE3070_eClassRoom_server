@@ -40,6 +40,7 @@ export async function restoreRedis() {
     await restoreCourses();
     await restoreQuestions();
     await restoreFiles();
+    await restoreReply();
     getLogger("RedisRestore").info("Redis restore completed.");
 }
 
@@ -137,4 +138,8 @@ async function restoreFiles() {
             .sAdd(filesKey, ID)
             .exec();
     }
+}
+
+async function restoreReply() {
+    //todo
 }
