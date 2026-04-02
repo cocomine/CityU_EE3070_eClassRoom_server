@@ -318,12 +318,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/QuestionDoneResponse'
+              example:
+                code: 200
+                message: Question 7144c3a8-61ea-432a-8724-568eec435832 is DONE.
+                data:
+                  meta:
+                    questionId: 7144c3a8-61ea-432a-8724-568eec435832
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    status: DONE
+                    title: Key Java Concepts
+                    prompt: 請集中L1的資料￼
+                    visibility: 0
+                    createAt: 2026-03-27T19:31:21.045Z
+                    startAt: 2026-03-27T19:31:21.045Z
+                    finishedAt: 2026-03-27T19:31:21.045Z
+                    updateAt: 2026-03-27T19:31:21.045Z
+                    errorMessage: ""
+                  questions:
+                    - question: Explain how Java achieves its write once, run anywhere characteristic.
+                      keypoint:
+                        - JVM interprets bytecode.
+                        - Bytecode runs on any platform with a JVM.
+                      expectedAnswer: JVM lets the same Java bytecode run across different systems.
+                    - question: In Object-Oriented Programming, a class serves as a blueprint for objects.
+                      keypoint:
+                        - Class is a template.
+                        - Object is an instance created from class.
+                      expectedAnswer: A class defines structure and behavior, and objects are runtime instances.
+                  mark: null
         '202':
           description: Question not ready yet
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/QuestionNotReadyResponse'
+              example:
+                code: 202
+                message: Question 123e4567-e89b-12d3-a456-426614174000 is not ready yet.
+                data:
+                  meta:
+                    questionId: 123e4567-e89b-12d3-a456-426614174000
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    status: GENERATING
+                    title: New Question (123e4567)
+                    prompt: ""
+                    visibility: 0
+                    createAt: 2026-04-02T19:36:13.000Z
+                    startAt: 2026-04-02T19:36:14.000Z
+                    finishedAt: ""
+                    updateAt: 2026-04-02T19:36:14.000Z
+                    errorMessage: ""
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -848,19 +892,32 @@ components:
           type: string
         data:
           type: object
-          required: [ meta, question, mark ]
+          required: [ meta, questions, mark ]
           properties:
             meta:
               $ref: '#/components/schemas/QuestionMeta'
-            question:
+            questions:
               type: array
               nullable: true
               items:
-                type: string
+                $ref: '#/components/schemas/GeneratedQuestionItem'
             mark:
               type: object
               nullable: true
               additionalProperties: true
+
+    GeneratedQuestionItem:
+      type: object
+      required: [ question, keypoint, expectedAnswer ]
+      properties:
+        question:
+          type: string
+        keypoint:
+          type: array
+          items:
+            type: string
+        expectedAnswer:
+          type: string
 
     QuestionNotReadyResponse:
       type: object
