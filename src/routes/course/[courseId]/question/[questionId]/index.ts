@@ -4,8 +4,6 @@ import {CourseRequest} from "../../index";
 import {RedisClient} from "../../../../../redis_service";
 import {DB} from "../../../../../sql_service";
 
-const router = Router({mergeParams: true});
-const logger = getLogger("/course/[courseId]/question/[questionId]");
 
 export interface CourseQuestionRequest extends CourseRequest {
     params: {
@@ -19,6 +17,11 @@ export interface PutCourseQuestionRequest extends CourseQuestionRequest {
         visibility?: "public" | "private" | any;
     };
 }
+
+
+const router = Router({mergeParams: true});
+const logger = getLogger("/course/[courseId]/question/[questionId]");
+
 
 /*======middleware======*/
 // Check questionId format and existence in course, if not exist return 404.
@@ -42,7 +45,7 @@ router.use(async (req: CourseQuestionRequest, res, next) => {
 
 /*=======router======*/
 // path: /course/[courseId]/question/[questionId]
-// GET: Returns the final question when DONE & return student mark (200).
+// GET: Returns the final question when DONE (200).
 //      If task is not finished yet, returns 202 Accepted with current status (meta).
 router.get("/", async (req: CourseQuestionRequest, res) => {
     const {courseId, questionId} = req.params;
@@ -162,7 +165,7 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
 });
 
 // path: /course/[courseId]/question/[questionId]
-// DEL: delete question return 204.
+// DEL: delete question return 200.
 //      If task is not finished yet, return 409 Conflict with current status (meta).
 router.delete("/", async (req: CourseQuestionRequest, res) => {
     const {courseId, questionId} = req.params;

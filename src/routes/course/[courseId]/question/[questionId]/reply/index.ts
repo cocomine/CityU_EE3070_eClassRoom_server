@@ -1,4 +1,4 @@
-import {Router} from "express";
+import {RequestHandler, Router} from "express";
 import {getLogger} from "log4js";
 import {CourseQuestionRequest} from "../index";
 import {RedisClient} from "../../../../../../redis_service";
@@ -24,6 +24,18 @@ export interface GetCourseQuestionReplyQuery {
 
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question/[questionId]/reply");
+
+/*======middleware======*/
+// Check EID format in header, if not exist or invalid format return 400.
+const eidHeaderCheck: RequestHandler = (req, res, next) => {
+    const eid = req.header("X-EID");
+
+    if (!eid || !/^[0-9a-zA-Z]+$/.test(eid)) {
+        return res.status(400).json({code: 400, message: "Invalid EID format"});
+    }
+
+    next();
+};
 
 
 /*=======router======*/
@@ -60,20 +72,9 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     res.json({code: 200, message: "All reply meta get successfully.", data: metaList});
 });
 
-// check X-EID header
-router.use(async (req, res, next) => {
-    const eid = req.header("X-EID");
-
-    if (!eid || !/^[0-9a-zA-Z]+$/.test(eid)) {
-        return res.status(400).json({code: 400, message: "Invalid EID format"});
-    }
-
-    next();
-});
-
 // path: /course/[courseId]/question/[questionId]/reply
 // POST: student reply question
-router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
+router.post("/", eidHeaderCheck, async (req: PostCourseQuestionReplyRequest, res) => {
     const eid = req.header("X-EID") as string;
     const {courseId, questionId} = req.params;
     const {subQuestionId, clientTaskId, overwrite} = req.body;
@@ -244,5 +245,8 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     });
 });
 
+// path: /course/[courseId]/question/[questionId]/reply/[replyId]/*
+router.use("/:replyId", require("./[replyId]"));
+logger.info("Loaded /course/[courseId]/question/[questionId]/reply/[replyId]");
 
 module.exports = router;
