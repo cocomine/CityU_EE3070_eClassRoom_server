@@ -346,7 +346,6 @@ paths:
                         - Class is a template.
                         - Object is an instance created from class.
                       expectedAnswer: A class defines structure and behavior, and objects are runtime instances.
-                  mark: null
         '202':
           description: Question not ready yet
           content:
@@ -1020,7 +1019,7 @@ components:
           type: string
         data:
           type: object
-          required: [ meta, questions, mark ]
+          required: [ meta, questions ]
           properties:
             meta:
               $ref: '#/components/schemas/QuestionMeta'
@@ -1029,10 +1028,6 @@ components:
               nullable: true
               items:
                 $ref: '#/components/schemas/GeneratedQuestionItem'
-            mark:
-              type: object
-              nullable: true
-              additionalProperties: true
 
     GeneratedQuestionItem:
       type: object
