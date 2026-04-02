@@ -121,8 +121,15 @@ interface OpenRouterUsage {
     cost_details?: Record<string, number>;
     completion_tokens_details?: Record<string, number>;
 }
-
 /* ===== penRouterChatCompletionResponse Type End ===== */
+
+export interface SqlFileRow {
+    mime: string,
+    blob: Buffer,
+    filename: string,
+    sha256: string
+}
+
 
 /* ==== Prompt === */
 export const SYSTEM_PROMPT = `
@@ -311,12 +318,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
 
     // get all files in course
     const fileList: ChatMessageContent[] = [];
-    const SqlResult = await DB.all<{
-        mime: string,
-        blob: Buffer,
-        filename: string,
-        sha256: string
-    }[]>("SELECT fb.mime, fb.blob, f.filename, fb.sha256 FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId]);
+    const SqlResult = await DB.all<SqlFileRow[]>("SELECT fb.mime, fb.blob, f.filename, fb.sha256 FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId]);
     for (let row of SqlResult) {
         // upload to CF R2
         const response = await S3.send(
