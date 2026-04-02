@@ -1,18 +1,19 @@
 import {ConnectionOptions, Queue, QueueEvents, Worker} from "bullmq";
 import {REDIS_URL, RedisClient} from "../redis_service";
 import {getLogger} from "log4js";
-import axios, {AxiosError} from "axios";
 import {DB} from "../sql_service";
-import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
-import xss from "xss";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {
     S3_ACCESS_KEY_ID,
     S3_ENDPOINT,
     S3_PUBLIC_URL,
     S3_SECRET_ACCESS_KEY,
+    SqlFileRow,
     SYSTEM_PROMPT
 } from "./QuestionGenerateQueue";
+import axios, {AxiosError} from "axios";
+import xss from "xss";
+import {SET_STATUS_LUA_SCRIPT} from "./LuaScript";
 
 
 export interface MarkingJobDate {
@@ -33,6 +34,18 @@ export interface MarkedReplySet {
     }[],
     one_sentence_summary?: string;
     next_step?: string;
+}
+
+export interface ValidMarkedReplySet {
+    score: number;
+    understanding_level: "none" | "low" | "partial" | "good" | "excellent";
+    key_point_feedback: {
+        point: string,
+        status: "full" | "partial" | "missing",
+        comment: string,
+    }[],
+    one_sentence_summary: string;
+    next_step: string;
 }
 
 export interface ChatMessageContentItemFile {
@@ -129,6 +142,14 @@ interface OpenRouterUsage {
 }
 
 /* ===== penRouterChatCompletionResponse Type End ===== */
+
+export interface SqlQuestionListRow {
+    question: string,
+    expected_answer: string,
+    key_points: string,
+    misconception_tag: string
+}
+
 
 /* ==== Prompt === */
 const USER_PROMPT = `
@@ -262,13 +283,8 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
 
     // get all files in course
     const fileList: ChatMessageContent[] = [];
-    const SqlResult = await DB.all<{
-        mime: string,
-        blob: Buffer,
-        filename: string,
-        sha256: string
-    }[]>("SELECT fb.mime, fb.blob, f.filename, fb.sha256 FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId]);
-    for (let row of SqlResult) {
+    const fileRows = await DB.all<SqlFileRow[]>("SELECT fb.mime, fb.blob, f.filename, fb.sha256 FROM file_blob fb JOIN files f ON fb.sha256 = f.sha256 WHERE f.courseID = ?", [courseId]);
+    for (let row of fileRows) {
         // upload to CF R2
         const response = await S3.send(
             new PutObjectCommand({
@@ -301,9 +317,17 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         }
     }
 
+    // get question
+    const questionListRow = await DB.get<SqlQuestionListRow>("SELECT question, expected_answer, key_points, misconception_tag FROM questions_list WHERE question_ID = ? AND sub_ID = ? LIMIT 1", [questionId, subQuestionId]);
+    const questionPackage = `
+    Question: ${questionListRow?.question}
+    expected_answer: ${questionListRow?.expected_answer}
+    key_points: ${questionListRow?.key_points}
+    misconception_tag: ${questionListRow?.misconception_tag}
+    `;
+
     // call LLM
     let result: MarkedReplySet;
-    //todo
     const requestBody = {
         model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
         stream: false,
@@ -333,7 +357,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT.replace("%Question%", "") + reply //todo
+                    text: USER_PROMPT.replace("%Question%", questionPackage) + reply //todo
                 },
                 ...fileList
             ]
@@ -348,9 +372,8 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             }
         });
 
-        if (await checkCanceled())
-            return;
-        logger.debug(res.data.choices);
+        if (await checkCanceled()) return;
+        logger.debug(res.data);
 
         // filter result
         const choice = res.data.choices.find(choice => choice.message.role === "assistant");
@@ -364,21 +387,49 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         if (choice?.finish_reason === "content_filter") {
             throw new Error("OpenRouter response is filtered by content filter: " + content);
         }
+        logger.debug(content);
 
         // get result
         result = JSON.parse(xss(content));
 
+        //check output
+        if (result.score === undefined || !result.understanding_level || !result.key_point_feedback || !result.next_step || !result.one_sentence_summary) {
+            throw new Error("Generated result is missing required fields.");
+        }
+        const validResult = result as ValidMarkedReplySet;
+
+        if (validResult.score < 0 || validResult.score > 100) {
+            throw new Error("Generated score is invalid.");
+        }
+        if (!["none", "low", "partial", "good", "excellent"].includes(validResult.understanding_level)) {
+            throw new Error("Generated understanding_level is invalid.");
+        }
+        if (!Array.isArray(validResult.key_point_feedback)) {
+            throw new Error("Generated key_point_feedback is invalid.");
+        }
+        if (validResult.key_point_feedback.some(item => (!item.point || !item.status || !item.comment))) {
+            throw new Error("Generated key_point_feedback is invalid.");
+        }
+        if (validResult.key_point_feedback.some(item => !["full", "partial", "missing"].includes(item.status))) {
+            throw new Error("Generated key_point_feedback has invalid status.");
+        }
+
         // stop before DB write if cancellation arrives after LLM response
         if (await checkCanceled()) return;
 
-        //todo
-        /*try {
+        try {
             await DB.exec("BEGIN");
             // save database
-            const statusUpdate = await DB.run(`UPDATE questions
-                                               SET status = 1
-                                               WHERE ID = ?
-                                                 AND status != 3`, questionId);
+            const statusUpdate = await DB.run(
+                `UPDATE reply
+                 SET status = 1,
+                     score = ?,
+                     summary = ?,
+                     understanding_level = ?,
+                     next_step = ?
+                 WHERE ID = ?
+                   AND status != 3`,
+                [validResult.score, validResult.one_sentence_summary, validResult.understanding_level, validResult.next_step, replyId]);
             if ((statusUpdate.changes ?? 0) === 0) {
                 // canceled tasks must not persist generated content
                 await DB.exec("ROLLBACK");
@@ -386,31 +437,20 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 return;
             }
 
-            // save question
-            if (result.question && result.question.length > 0) {
-                const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
-                const params = result.question.flatMap((question, index) => [questionId, index, question]);
-                await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
+            // save reply keypoint
+            const placeholders = validResult.key_point_feedback.map(() => "(?, ?, ?, ?, ?)").join(", ");
+            const params = validResult.key_point_feedback.flatMap((item, index) =>
+                [replyId, index, item.point, item.status, item.comment]);
+            await DB.run(`INSERT INTO reply_keypoint (reply_ID, point_ID, point, status, comment)
                               VALUES ${placeholders}`, params);
-            }
-
-            // save title
-            if (result.title && result.title.length > 0) {
-                await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
-            }
 
             // save redis
-            const multi = RedisClient.multi();
-            multi.hSet(metaKey, {
+            const multi = RedisClient.multi()
+                .hSet(metaKey, {
                 updateAt: new Date().toISOString(),
                 finishedAt: new Date().toISOString(),
-            });
-            if (result.question && result.question.length > 0) {
-                multi.json.set(resultKey, "$", result.question); // save question
-            }
-            if (result.title && result.title.length > 0) {
-                multi.hSet(metaKey, {title: result.title}); // save title
-            }
+                })
+                .json.set(resultKey, "$", {...validResult}); // save question
 
             // update status
             await multi
@@ -420,14 +460,14 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
                     status: "DONE",
-                    title: result.title
+                    ...validResult
                 }))
                 .exec();
             await DB.exec("COMMIT");
         } catch (err) {
             await DB.exec("ROLLBACK");
             throw err;
-        }*/
+        }
     } catch
         (err: AxiosError | Error | any) {
         // if status is "CANCELLED"

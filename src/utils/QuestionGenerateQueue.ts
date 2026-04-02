@@ -29,6 +29,16 @@ export interface GeneratedQuestionSet {
     title?: string;
 }
 
+export interface ValidGeneratedQuestionSet {
+    title: string;
+    questions: {
+        question: string;
+        expected_answer: string;
+        key_points: string[];
+        misconception_tag: string;
+    }[];
+}
+
 export interface ChatMessageContentItemFile {
     type: "file" | string,
     file: {
@@ -121,6 +131,7 @@ interface OpenRouterUsage {
     cost_details?: Record<string, number>;
     completion_tokens_details?: Record<string, number>;
 }
+
 /* ===== penRouterChatCompletionResponse Type End ===== */
 
 export interface SqlFileRow {
@@ -414,27 +425,35 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         // get result
         result = JSON.parse(xss(content));
 
-        // stop before DB write if cancellation arrives after LLM response
-        if (await checkCanceled()) return;
-
         //check output
         if (!result.questions || !result.title) {
             throw new Error("Generated result is missing required fields.");
         }
+        if (!Array.isArray(result.questions)) {
+            throw new Error("Generated result questions field must be an array.");
+        }
         if (result.questions.length < 4) {
             throw new Error("Generated result must contain exactly 4 questions.");
         }
-        if (result.questions.every(item => !item.question || !item.expected_answer || !item.key_points || !item.misconception_tag)) {
+        if (result.questions.some(item => !item.question || !item.expected_answer || !item.key_points || !item.misconception_tag)) {
             throw new Error("Each question must contain question, expected_answer, key_points and misconception_tag.");
         }
+        if (result.questions.some(item => !Array.isArray(item.key_points))) {
+            throw new Error("Generated result key_points field must be an array.");
+        }
+        const validResult = result as ValidGeneratedQuestionSet;
+
+        // stop before DB write if cancellation arrives after LLM response
+        if (await checkCanceled()) return;
 
         try {
             await DB.exec("BEGIN");
             // save database
-            const statusUpdate = await DB.run(`UPDATE questions
-                                               SET status = 1
-                                               WHERE ID = ?
-                                                 AND status != 3`, questionId);
+            const statusUpdate = await DB.run(
+                `UPDATE questions
+                 SET status = 1
+                 WHERE ID = ?
+                   AND status != 3`, questionId);
             if ((statusUpdate.changes ?? 0) === 0) {
                 // canceled tasks must not persist generated content
                 await DB.exec("ROLLBACK");
@@ -443,28 +462,28 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             }
 
             // save question
-            const placeholders = result.questions.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
-            const params = result.questions.flatMap((item, index) =>
+            const placeholders = validResult.questions.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+            const params = validResult.questions.flatMap((item, index) =>
                 [questionId, index, item.question, item.expected_answer, JSON.stringify(item.key_points), item.misconception_tag]);
             await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question, expected_answer, key_points,
                                                       misconception_tag)
                           VALUES ${placeholders}`, params);
 
             // save title
-            await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
+            await DB.run("UPDATE questions SET title = ? WHERE ID = ?", validResult.title, questionId);
 
             // save redis
-            const multi = RedisClient.multi();
-            multi.hSet(metaKey, {
-                updateAt: new Date().toISOString(),
-                finishedAt: new Date().toISOString(),
-            });
-            multi.json.set(resultKey, "$", result.questions.map(item => ({
-                question: item.question as string,
-                keypoint: item.key_points as string[],
-                expectedAnswer: item.expected_answer as string
-            })));
-            multi.hSet(metaKey, {title: result.title}); // save title
+            const multi = RedisClient.multi()
+                .hSet(metaKey, {
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
+                })
+                .json.set(resultKey, "$", validResult.questions.map(item => ({
+                    question: item.question,
+                    keypoint: item.key_points,
+                    expectedAnswer: item.expected_answer
+                })))
+                .hSet(metaKey, {title: validResult.title}); // save title
 
             // update status
             await multi
@@ -474,7 +493,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
                     status: "DONE",
-                    title: result.title
+                    title: validResult.title
                 }))
                 .exec();
             await DB.exec("COMMIT");

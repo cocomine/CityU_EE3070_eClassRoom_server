@@ -141,6 +141,13 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         await DB.exec("COMMIT");
     } catch (err: any) {
         await DB.exec("ROLLBACK");
+
+        // backup duplicate check
+        if (err.code === "SQLITE_CONSTRAINT" || err.code === "SQLITE_CONSTRAINT_PRIMARYKEY" || err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+            logger.warn(`SQL Conflict: ${err.message}`);
+            return res.status(409).json({code: 409, message: "Conflict: This reply or related record already exists."});
+        }
+
         logger.error("SQL Error:", err);
         return res.status(500).json({code: 500, message: "Failed to create reply."});
     }
