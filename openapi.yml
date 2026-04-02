@@ -14,6 +14,7 @@ tags:
   - name: Courses
   - name: Files
   - name: Questions
+  - name: Replies
 
 paths:
   /:
@@ -463,6 +464,108 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /course/{courseId}/question/{questionId}/reply:
+    get:
+      tags: [ Replies ]
+      summary: List all replies for a question
+      operationId: listQuestionReplies
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+        - $ref: '#/components/parameters/ReplyStatusFilterQuery'
+      responses:
+        '200':
+          description: Reply metadata list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyListResponse'
+              example:
+                code: 200
+                message: All reply meta get successfully.
+                data:
+                  - replyId: 1440f78a-1786-4769-853e-5668b575fd4e
+                    questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    subQuestionId: "1"
+                    eid: aaa2
+                    content: 學生作答內容...
+                    status: DONE
+                    score: 40
+                    createAt: 2026-04-02T18:15:13.216Z
+                    startAt: 2026-04-02T18:15:13.216Z
+                    finishedAt: 2026-04-02T18:15:13.216Z
+                    updateAt: 2026-04-02T18:15:13.216Z
+                    errorMessage: ""
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [ Replies ]
+      summary: Submit student reply for a sub-question
+      operationId: createQuestionReply
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+        - $ref: '#/components/parameters/XEIDHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplyCreateRequest'
+            example:
+              subQuestionId: 2
+              content: 在 Java 中，double 轉 int 屬於 narrowing conversion，所以要顯式 cast。
+              clientTaskId: 7f4d2812-14f0-4a53-b750-6a8f40fbb5c5
+              overwrite: false
+      responses:
+        '200':
+          description: Reply accepted and queued for marking
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyCreateResponse'
+              example:
+                code: 200
+                message: Reply question successfully.
+                data:
+                  replyId: 4eea0591-162a-426d-b655-e0ad4eb11516
+                  status: PENDING
+        '202':
+          description: Idempotency hit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyCreateDuplicateResponse'
+              example:
+                code: 202
+                message: Request already receive
+                data:
+                  replyId: 4eea0591-162a-426d-b655-e0ad4eb11516
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflict (already replied or DB uniqueness conflict)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                already_replied:
+                  value:
+                    code: 409
+                    message: "Conflict: You have already replied to this question. Please set overwrite to true if you want to overwrite the reply."
+                duplicated_record:
+                  value:
+                    code: 409
+                    message: "Conflict: This reply or related record already exists."
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /course/{courseId}/question/{questionId}/stream:
     get:
       tags: [ Questions ]
@@ -545,6 +648,22 @@ components:
       schema:
         type: string
         pattern: '^(PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE)(:(PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE))*$'
+    ReplyStatusFilterQuery:
+      name: status
+      in: query
+      required: false
+      description: Filter replies by status. Multiple statuses are joined by `:`.
+      schema:
+        type: string
+        pattern: '^(PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE)(:(PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE))*$'
+    XEIDHeader:
+      name: X-EID
+      in: header
+      required: true
+      description: Student identifier. Only alphanumeric characters are accepted.
+      schema:
+        type: string
+        pattern: '^[0-9a-zA-Z]+$'
 
   responses:
     BadRequest:
@@ -574,6 +693,15 @@ components:
           example:
             code: 415
             message: Content-Type must be multipart/form-data
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: 403
+            message: Question is not public, you can't reply.
     InternalServerError:
       description: Internal server error
       content:
@@ -918,6 +1046,111 @@ components:
             type: string
         expectedAnswer:
           type: string
+
+    ReplyMeta:
+      type: object
+      additionalProperties: false
+      properties:
+        replyId:
+          type: string
+          format: uuid
+        questionId:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        subQuestionId:
+          type: string
+        eid:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: '#/components/schemas/QuestionStatus'
+        score:
+          type: integer
+          nullable: true
+        createAt:
+          type: string
+        startAt:
+          type: string
+        finishedAt:
+          type: string
+        updateAt:
+          type: string
+        errorMessage:
+          type: string
+
+    ReplyListResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: All reply meta get successfully.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplyMeta'
+
+    ReplyCreateRequest:
+      type: object
+      required: [ subQuestionId, content, clientTaskId ]
+      properties:
+        subQuestionId:
+          type: integer
+          minimum: 0
+        content:
+          type: string
+          minLength: 1
+        clientTaskId:
+          type: string
+          format: uuid
+        overwrite:
+          type: boolean
+
+    ReplyCreateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Reply question successfully.
+        data:
+          type: object
+          required: [ replyId, status ]
+          properties:
+            replyId:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [ PENDING ]
+
+    ReplyCreateDuplicateResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+          example: Request already receive
+        data:
+          type: object
+          required: [ replyId ]
+          properties:
+            replyId:
+              type: string
+              format: uuid
 
     QuestionNotReadyResponse:
       type: object

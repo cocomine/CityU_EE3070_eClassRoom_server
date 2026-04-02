@@ -171,7 +171,7 @@ async function restoreFiles() {
 }
 
 async function restoreReply() {
-    const replys = await DB.all<SQLReply[]>("SELECT reply.*, questions.courseID FROM reply, questions WHERE reply.questionID = questions.ID");
+    const replys = await DB.all<SQLReply[]>("SELECT reply.*, questions.courseID FROM reply, questions WHERE reply.questionID = questions.ID ORDER BY reply.subQuestionID");
     for (let reply of replys) {
         const {
             ID,
@@ -193,9 +193,9 @@ async function restoreReply() {
 
         // set meta
         redisMulti.hSet(metaKey, {
-            courseID,
-            questionID,
-            subQuestionID,
+            courseId: courseID,
+            questionId: questionID,
+            subQuestionId: subQuestionID,
             replyId: ID,
             content,
             eid: EID,

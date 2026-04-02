@@ -54,7 +54,7 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
             if (!t.includes(meta.status ?? "")) continue;
         }
 
-        metaList.push({...meta, score: parseInt(meta.score ?? "")});
+        metaList.push({...meta, score: parseInt(meta.score ?? ""), subQuestionId: parseInt(meta.subQuestionId ?? "")});
     }
 
     res.json({code: 200, message: "All reply meta get successfully.", data: metaList});
@@ -143,7 +143,7 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         return res.status(202).json({
             code: 202,
             message: "Request already receive", data: {
-                questionId: idem
+                replyId: idem
             }
         });
     }
