@@ -66,7 +66,8 @@ router.post("/", async (req: CourseQuestionRequest, res) => {
 
     // try to remove job
     const job = await QuestionGenerateTaskQueue.getJob(questionId);
-    await job?.remove();
+    job?.remove().catch(() => {
+    });
 });
 
 

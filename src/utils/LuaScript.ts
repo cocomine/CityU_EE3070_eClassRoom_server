@@ -25,7 +25,7 @@ export const SET_IDEM_LUA_SCRIPT = `
 local cur = redis.call("GET", KEYS[1])
 if cur == false then
   -- Key doesn't exist, set it with expiration and return nil
-  redis.call("SET", KEYS[1], ARGV[1], "EX", 86400)
+  redis.call("SET", KEYS[1], ARGV[1], "EX", 60)
   return nil
 else
   -- Key exists, extend its expiration and return the current value

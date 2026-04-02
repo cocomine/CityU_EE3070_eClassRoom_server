@@ -235,11 +235,12 @@ const S3 = new S3Client({
  */
 const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", async (job) => {
     const {courseId, questionId, subQuestionId, reply, replyId} = job.data;
-    const metaKey = `course:${courseId}:question:${questionId}:meta`;
+    const metaKey = `course:${courseId}:question:${questionId}:reply:${replyId}:meta`;
     const cancelKey = `course:${courseId}:question:${questionId}:reply:${replyId}:cancel`;
     const hbKey = `course:${courseId}:question:${questionId}:reply:${replyId}:heartbeat`;
     const channelKey = `course:${courseId}:question:${questionId}:reply:${replyId}:status`;
     const resultKey = `course:${courseId}:question:${questionId}:reply:${replyId}:result`;
+    const replyKey = `course:${courseId}:question:${questionId}:reply`;
     logger.info(`Processing reply marking task. courseId: ${courseId}, taskId: ${questionId}, subQuestionID: ${subQuestionId}, replyId: ${replyId}, attempt: ${job.attemptsStarted}`);
 
     // heartbeat to prevent stale
@@ -256,10 +257,14 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
     const checkCanceled = async () => {
         const status = await RedisClient.exists(cancelKey);
         if (status > 0) {
-            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
+            logger.warn(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
             await RedisClient.multi()
-                .hSet(metaKey, {status: "CANCELLED"})
                 .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
+                .del(metaKey)
+                .del(resultKey)
+                .del(cancelKey)
+                .del(hbKey)
+                .sRem(replyKey, replyId)
                 .exec();
             clearInterval(heartbeat);
             return true;

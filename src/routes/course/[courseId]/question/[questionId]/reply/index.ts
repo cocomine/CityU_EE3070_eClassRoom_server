@@ -5,6 +5,7 @@ import {RedisClient} from "../../../../../../redis_service";
 import xss from "xss";
 import {DB} from "../../../../../../sql_service";
 import {MarkingTaskQueue} from "../../../../../../utils/ReplyMarkQueue";
+import {SET_IDEM_LUA_SCRIPT} from "../../../../../../utils/LuaScript";
 
 export interface PostCourseQuestionReplyRequest extends CourseQuestionRequest {
     body: {
@@ -70,6 +71,8 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         return res.status(404).json({code: 404, message: "Sub question not found"});
     }
 
+    // todo:check is public
+
     // check Conflict
     if (!overwrite) {
         const exist = await RedisClient.sIsMember(studentKey, questionId);
@@ -85,7 +88,10 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
 
     // Idempotency
     const idemKey = `idem:reply:${clientTaskId}`;
-    const idem = await RedisClient.get(idemKey);
+    const idem = await RedisClient.eval(SET_IDEM_LUA_SCRIPT, {
+        keys: [idemKey],
+        arguments: [targetReplyId]
+    });
     if (idem) {
         // already have task
         return res.status(202).json({
@@ -104,12 +110,28 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         if (overwrite) {
             const existingReply = await DB.get("SELECT ID FROM reply WHERE questionID = ? AND subQuestionID = ? AND EID = ?", [questionId, subQuestionId, eid]);
             if (existingReply) {
-                targetReplyId = existingReply.ID;
-                await DB.run("DELETE FROM reply WHERE ID = ?", targetReplyId);
+                // cancel old job if exist
+                const job = await MarkingTaskQueue.getJob(existingReply.ID);
+                if (job) {
+                    // set cancel flag in redis, the marking worker will check this flag before marking, if exist then skip marking and delete the job.
+                    const cancelKey = `course:${courseId}:question:${questionId}:reply:${existingReply.ID}:cancel`;
+                    await RedisClient.set(cancelKey, 1, {EX: 3600});
+                    job.remove().catch(() => {
+                    });
+                } else {
+                    // if not exist, remove from redis
+                    await RedisClient.multi()
+                        .del(`course:${courseId}:question:${questionId}:reply:${existingReply.ID}:meta`)
+                        .del(`course:${courseId}:question:${questionId}:reply:${existingReply.ID}:result`)
+                        .sRem(replyKey, existingReply.ID)
+                        .exec();
+                }
+
+                //delete old reply
+                await DB.run("DELETE FROM reply WHERE ID = ?", existingReply.ID);
             }
         }
         const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
-        await RedisClient.set(idemKey, targetReplyId, {EX: 86400}); // set idem
 
         // insert new
         const stmt = await DB.prepare(
@@ -158,8 +180,6 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         }
     });
 
-    //todo: overwrite job
-
     // Enqueue Job
     await MarkingTaskQueue.add("MarkingTaskQueue", {
         questionId,
@@ -170,7 +190,7 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     }, {
         jobId: targetReplyId,
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: true,
         attempts: 5,
         backoff: {
             type: "exponential",

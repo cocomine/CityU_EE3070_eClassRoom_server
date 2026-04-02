@@ -302,7 +302,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     const checkCanceled = async () => {
         const status = await RedisClient.exists(cancelKey);
         if (status > 0) {
-            logger.info(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
+            logger.warn(`Question generate task is cancelled. courseId: ${courseId}, questionId: ${questionId}`);
             await RedisClient.multi()
                 .hSet(metaKey, {status: "CANCELLED"})
                 .publish(channelKey, JSON.stringify({status: "CANCELLED"}))
