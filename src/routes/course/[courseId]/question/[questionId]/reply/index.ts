@@ -16,12 +16,51 @@ export interface PostCourseQuestionReplyRequest extends CourseQuestionRequest {
     };
 }
 
+export interface GetCourseQuestionReplyQuery {
+    visibility?: "0" | "1" | string;
+    status?: "PENDING" | "GENERATING" | "DONE" | "ERROR" | "CANCELLED" | "STALE" | string;
+}
+
 
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question/[questionId]/reply");
 
-/*======middleware======*/
-//
+
+/*=======router======*/
+// path: /course/[courseId]/question/[questionId]/reply
+// GET: get all repled of the question
+router.get("/", async (req: CourseQuestionRequest, res) => {
+    const {courseId, questionId} = req.params;
+    const query: GetCourseQuestionReplyQuery = req.query;
+    const replyKey = `course:${courseId}:question:${questionId}:reply`;
+    const metaList = [];
+
+    // check exists
+    if (await RedisClient.exists(replyKey) === 0) {
+        return res.status(404).json({code: 404, message: `No any question found in course ${courseId}.`});
+    }
+
+    // get all reply meta
+    const replyList = await RedisClient.sMembers(replyKey);
+    for (let replyId of replyList) {
+        const metaKey = `course:${courseId}:question:${questionId}:reply:${replyId}:meta`;
+        const meta = await RedisClient.hGetAll(metaKey);
+
+        if (Object.keys(meta).length === 0) continue;
+
+        // filter
+        if (query.status) {
+            const t = query.status.split(":");
+            if (!t.includes(meta.status ?? "")) continue;
+        }
+
+        metaList.push({...meta, score: parseInt(meta.score ?? "")});
+    }
+
+    res.json({code: 200, message: "All reply meta get successfully.", data: metaList});
+});
+
+// check X-EID header
 router.use(async (req, res, next) => {
     const eid = req.header("X-EID");
 
@@ -30,18 +69,6 @@ router.use(async (req, res, next) => {
     }
 
     next();
-});
-
-/*=======router======*/
-// path: /course/[courseId]/question/[questionId]/reply
-// GET: get all repled of the question
-router.get("/", async (req: CourseQuestionRequest, res) => {
-    const {courseId, questionId} = req.params;
-    const replyKey = `course:${courseId}:question:${questionId}:reply`;
-    const metaList = [];
-
-    //todo
-    //const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
 });
 
 // path: /course/[courseId]/question/[questionId]/reply
@@ -56,8 +83,9 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     const replyKey = `course:${courseId}:question:${questionId}:reply`;
     const studentKey = `student:${eid}:reply`;
 
+    console.log(req.body);
     // validate input
-    if (!subQuestionId || content === "") {
+    if (subQuestionId === undefined || content === "") {
         return res.status(400).json({code: 400, message: "Missing required fields"});
     }
     if (typeof subQuestionId !== "number") {
@@ -167,7 +195,7 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
                 content,
                 eid,
                 status: "PENDING",
-                score: 0, // 0-100 score
+                score: "", // 0-100 score
                 createAt: new Date().toISOString(),
                 startAt: "",
                 finishedAt: "",

@@ -2,6 +2,7 @@ import {DB} from "./sql_service";
 import {RedisClient} from "./redis_service";
 import {QuestionGenerateTaskQueue} from "./utils/QuestionGenerateQueue";
 import {getLogger} from "log4js";
+import {MarkingTaskQueue} from "./utils/ReplyMarkQueue";
 
 export interface Course {
     ID: string;
@@ -37,6 +38,29 @@ export interface SQLFileBlob {
     blob: Buffer;
     size: number;
 }
+
+export interface SQLReply {
+    ID: string;
+    questionID: string;
+    subQuestionID: number;
+    score: number | null;
+    status: number;
+    content: string;
+    EID: string;
+    summary: string | null;
+    next_step: string | null;
+    understanding_level: "none" | "low" | "partial" | "good" | "excellent";
+    courseID: string;
+}
+
+export interface SQLReplyKeyPoint {
+    reply_ID: string;
+    point: string;
+    status: "full" | "partial" | "missing";
+    comment: string;
+    point_ID: number;
+}
+
 
 export async function restoreRedis() {
     await restoreCourses();
@@ -147,5 +171,80 @@ async function restoreFiles() {
 }
 
 async function restoreReply() {
-    //todo
+    const replys = await DB.all<SQLReply[]>("SELECT reply.*, questions.courseID FROM reply, questions WHERE reply.questionID = questions.ID");
+    for (let reply of replys) {
+        const {
+            ID,
+            questionID,
+            subQuestionID,
+            score,
+            status,
+            content,
+            EID,
+            understanding_level,
+            next_step,
+            summary,
+            courseID
+        } = reply;
+        const metaKey = `course:${courseID}:question:${questionID}:reply:${ID}:meta`;
+        const replyKey = `course:${courseID}:question:${questionID}:reply`;
+        const resultKey = `course:${courseID}:question:${questionID}:reply:${ID}:result`;
+        const redisMulti = RedisClient.multi();
+
+        // set meta
+        redisMulti.hSet(metaKey, {
+            courseID,
+            questionID,
+            subQuestionID,
+            replyId: ID,
+            content,
+            eid: EID,
+            status: ["PENDING", "DONE", "ERROR", "CANCELLED"].at(status) ?? "ERROR", // 0 = PENDING, 1 = DONE, 2 = ERROR, 3 = CANCELLED,
+            score: score ?? "", // 0-100 score
+            createAt: new Date().toISOString(),
+            startAt: status === 1 ? new Date().toISOString() : "",
+            finishedAt: status === 1 ? new Date().toISOString() : "",
+            errorMessage: "",
+            updateAt: new Date().toISOString()
+        });
+        redisMulti.sAdd(replyKey, ID);
+
+        // set result if DONE
+        if (status === 1) {
+            const keyPoints = await DB.all<SQLReplyKeyPoint[]>("SELECT * FROM reply_keypoint WHERE reply_ID = ? ORDER BY point_ID", [ID]);
+            const keyPointList = keyPoints.map(r => ({
+                point: r.point,
+                status: r.status,
+                comment: r.comment,
+            }));
+            redisMulti.json.set(resultKey, "$", {
+                score: score,
+                understanding_level: understanding_level,
+                key_point_feedback: keyPointList,
+                one_sentence_summary: summary,
+                next_step: next_step,
+            });
+        }
+        await redisMulti.exec();
+
+        // add queue if still in PENDING
+        if (status === 0) {
+            await MarkingTaskQueue.add("MarkingTaskQueue", {
+                questionId: questionID,
+                courseId: courseID,
+                subQuestionId: subQuestionID,
+                reply: content,
+                replyId: ID
+            }, {
+                jobId: ID,
+                removeOnComplete: true,
+                removeOnFail: true,
+                attempts: 5,
+                backoff: {
+                    type: "exponential",
+                    delay: 1000,
+                }
+            });
+        }
+    }
 }

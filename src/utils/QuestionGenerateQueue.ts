@@ -477,18 +477,18 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 .hSet(metaKey, {
                     updateAt: new Date().toISOString(),
                     finishedAt: new Date().toISOString(),
+                    title: validResult.title
                 })
                 .json.set(resultKey, "$", validResult.questions.map(item => ({
                     question: item.question,
                     keypoint: item.key_points,
                     expectedAnswer: item.expected_answer
                 })))
-                .hSet(metaKey, {title: validResult.title}); // save title
 
             // update status
             await multi
                 .eval(SET_STATUS_LUA_SCRIPT, {
-                    keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                    keys: [metaKey],
                     arguments: ["GENERATING", "DONE"],
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel

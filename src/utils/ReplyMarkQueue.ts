@@ -427,9 +427,9 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             // save database
             const statusUpdate = await DB.run(
                 `UPDATE reply
-                 SET status = 1,
-                     score = ?,
-                     summary = ?,
+                 SET status    = 1,
+                     score     = ?,
+                     summary   = ?,
                      understanding_level = ?,
                      next_step = ?
                  WHERE ID = ?
@@ -447,20 +447,21 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             const params = validResult.key_point_feedback.flatMap((item, index) =>
                 [replyId, index, item.point, item.status, item.comment]);
             await DB.run(`INSERT INTO reply_keypoint (reply_ID, point_ID, point, status, comment)
-                              VALUES ${placeholders}`, params);
+                          VALUES ${placeholders}`, params);
 
             // save redis
             const multi = RedisClient.multi()
                 .hSet(metaKey, {
-                updateAt: new Date().toISOString(),
-                finishedAt: new Date().toISOString(),
+                    score: validResult.score,
+                    updateAt: new Date().toISOString(),
+                    finishedAt: new Date().toISOString(),
                 })
                 .json.set(resultKey, "$", {...validResult}); // save question
 
             // update status
             await multi
                 .eval(SET_STATUS_LUA_SCRIPT, {
-                    keys: ["course:" + courseId + ":question:" + questionId + ":meta"],
+                    keys: [metaKey],
                     arguments: ["GENERATING", "DONE"],
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel

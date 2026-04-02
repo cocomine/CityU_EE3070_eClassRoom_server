@@ -7,8 +7,6 @@ import {DB} from "../../../../sql_service";
 import {SET_IDEM_LUA_SCRIPT} from "../../../../utils/LuaScript";
 import xss from "xss";
 
-const router = Router({mergeParams: true});
-const logger = getLogger("/course/[courseId]/question");
 
 export interface PostQuestionRequest extends CourseRequest {
     body: {
@@ -22,8 +20,12 @@ export interface GetQuestionRequestQuery {
     status?: "PENDING" | "GENERATING" | "DONE" | "ERROR" | "CANCELLED" | "STALE" | string;
 }
 
-/*=======router======*/
 
+const router = Router({mergeParams: true});
+const logger = getLogger("/course/[courseId]/question");
+
+
+/*=======router======*/
 // path: /course/[courseId]/question
 // GET: list question
 router.get("/", async (req: CourseRequest, res) => {
