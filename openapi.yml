@@ -304,6 +304,58 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /course/{courseId}/question/replied:
+    get:
+      tags: [ Replies ]
+      summary: List answered questions for a student in this course
+      operationId: listRepliedQuestions
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/XEIDHeader'
+      responses:
+        '200':
+          description: Answered questions fetched successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepliedQuestionListResponse'
+              examples:
+                answered:
+                  value:
+                    code: 200
+                    message: Answered questions fetched successfully.
+                    data:
+                      - replyId: 1440f78a-1786-4769-853e-5668b575fd4e
+                        questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
+                        courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                        subQuestionId: 1
+                        eid: aaa2
+                        content: 學生作答內容...
+                        status: DONE
+                        score: 40
+                        createAt: 2026-04-02T20:58:05.501Z
+                        startAt: 2026-04-02T20:58:05.501Z
+                        finishedAt: 2026-04-02T20:58:05.501Z
+                        updateAt: 2026-04-02T20:58:05.501Z
+                        errorMessage: ""
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Not found (no answered questions or course not found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                no_answer:
+                  value:
+                    code: 404
+                    message: No questions answered.
+                no_course:
+                  value:
+                    code: 404
+                    message: No course found.
+
   /course/{courseId}/question/{questionId}:
     get:
       tags: [ Questions ]
@@ -1091,6 +1143,57 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReplyMeta'
+
+    RepliedQuestionItem:
+      type: object
+      additionalProperties: false
+      properties:
+        replyId:
+          type: string
+          format: uuid
+        questionId:
+          type: string
+          format: uuid
+        courseId:
+          type: string
+          format: uuid
+        subQuestionId:
+          type: integer
+          minimum: 0
+        eid:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: '#/components/schemas/QuestionStatus'
+        score:
+          type: integer
+          nullable: true
+        createAt:
+          type: string
+        startAt:
+          type: string
+        finishedAt:
+          type: string
+        updateAt:
+          type: string
+        errorMessage:
+          type: string
+
+    RepliedQuestionListResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Answered questions fetched successfully.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepliedQuestionItem'
 
     ReplyCreateRequest:
       type: object

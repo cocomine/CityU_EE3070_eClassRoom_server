@@ -33,7 +33,7 @@ router.get("/", eidHeaderCheck, async (req: CourseRequest, res) => {
 
     // Check if empty
     if (!answeredQuestionIds || answeredQuestionIds.length === 0) {
-        return res.json({code: 200, message: "No questions answered."});
+        return res.status(404).json({code: 404, message: "No questions answered."});
     }
 
     const metaList = [];
