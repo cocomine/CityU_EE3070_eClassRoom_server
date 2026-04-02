@@ -152,7 +152,7 @@ router.post("/", async (req: PostQuestionRequest, res) => {
         backoff: {
             type: "exponential",
             delay: 1000,
-        }
+        },
     });
 });
 

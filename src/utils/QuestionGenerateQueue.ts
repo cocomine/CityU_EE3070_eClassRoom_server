@@ -20,7 +20,12 @@ export interface QuestionGenerateJobDate {
 }
 
 export interface GeneratedQuestionSet {
-    question?: string[];
+    questions?: {
+        question?: string,
+        expected_answer?: string,
+        key_points?: string[],
+        misconception_tag?: string,
+    }[];
     title?: string;
 }
 
@@ -162,6 +167,69 @@ MATERIAL:
 OTHER REQUIREMENTS:
 - Markdown Support.
 -`;
+const RESPONSE_FORMAT = {
+    type: "json_schema",
+    json_schema: {
+        name: "QuestionSet",
+        strict: true,
+        schema: {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["questions", "title"],
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Topic of this question set within ~100 words.",
+                    "maxLength": 600,
+                },
+                "questions": {
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": "Exactly 4 questions.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "question",
+                            "expected_answer",
+                            "key_points",
+                            "misconception_tag"
+                        ],
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "minLength": 1,
+                                description: "Actual question. Markdown support."
+                            },
+                            "expected_answer": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "What a correct student answer should roughly include. Markdown not support."
+                            },
+                            "key_points": {
+                                "type": "array",
+                                "minItems": 3,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                },
+                                "description": "Key grading points. Prefer 3-6 concise bullet-like items. Markdown not support."
+                            },
+                            "misconception_tag": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Short tag for a major misconception (e.g. 'CHECKED_VS_UNCHECKED_CONFUSION'). Markdown not support."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
 
 // S3 Config
 export const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL;
@@ -293,36 +361,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         reasoning: {effort: "medium"},
         modalities: ["text"],
         metadata: {courseId, questionId},
-        response_format: {
-            type: "json_schema",
-            json_schema: {
-                name: "QuestionSet",
-                strict: true,
-                schema: {
-                    type: "object",
-                    properties: {
-                        question: {
-                            type: "array",
-                            minItems: 4,
-                            maxItems: 4,
-                            items: {
-                                type: "string",
-                                minLength: 1
-                            },
-                            description: "Exactly 4 questions."
-                        },
-                        title: {
-                            type: "string",
-                            minLength: 1,
-                            maxLength: 500,
-                            description: "A short title about these 4 questions. Must be within 20 words."
-                        }
-                    },
-                    required: ["question", "title"],
-                    additionalProperties: false
-                }
-            }
-        },
+        response_format: RESPONSE_FORMAT,
         plugins: [{
             id: "response-healing"
         }, {
@@ -354,7 +393,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         });
 
         if (await checkCanceled()) return;
-        logger.debug(res.data.choices);
+        logger.debug(res.data);
 
         // filter result
         const choice = res.data.choices.find(choice => choice.message.role === "assistant");
@@ -368,12 +407,24 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         if (choice?.finish_reason === "content_filter") {
             throw new Error("OpenRouter response is filtered by content filter: " + content);
         }
+        logger.debug(content);
 
         // get result
         result = JSON.parse(xss(content));
 
         // stop before DB write if cancellation arrives after LLM response
         if (await checkCanceled()) return;
+
+        //check output
+        if (!result.questions || !result.title) {
+            throw new Error("Generated result is missing required fields.");
+        }
+        if (result.questions.length < 4) {
+            throw new Error("Generated result must contain exactly 4 questions.");
+        }
+        if (result.questions.every(item => !item.question || !item.expected_answer || !item.key_points || !item.misconception_tag)) {
+            throw new Error("Each question must contain question, expected_answer, key_points and misconception_tag.");
+        }
 
         try {
             await DB.exec("BEGIN");
@@ -390,17 +441,15 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             }
 
             // save question
-            if (result.question && result.question.length > 0) {
-                const placeholders = result.question.map(() => "(?, ?, ?)").join(", ");
-                const params = result.question.flatMap((question, index) => [questionId, index, question]);
-                await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question)
-                              VALUES ${placeholders}`, params);
-            }
+            const placeholders = result.questions.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+            const params = result.questions.flatMap((item, index) =>
+                [questionId, index, item.question, item.expected_answer, JSON.stringify(item.key_points), item.misconception_tag]);
+            await DB.run(`INSERT INTO questions_list (question_ID, sub_ID, question, expected_answer, key_points,
+                                                      misconception_tag)
+                          VALUES ${placeholders}`, params);
 
             // save title
-            if (result.title && result.title.length > 0) {
-                await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
-            }
+            await DB.run("UPDATE questions SET title = ? WHERE ID = ?", result.title, questionId);
 
             // save redis
             const multi = RedisClient.multi();
@@ -408,12 +457,12 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
                 updateAt: new Date().toISOString(),
                 finishedAt: new Date().toISOString(),
             });
-            if (result.question && result.question.length > 0) {
-                multi.json.set(resultKey, "$", result.question); // save question
-            }
-            if (result.title && result.title.length > 0) {
-                multi.hSet(metaKey, {title: result.title}); // save title
-            }
+            multi.json.set(resultKey, "$", result.questions.map(item => ({
+                question: item.question as string,
+                keypoint: item.key_points as string[],
+                expectedAnswer: item.expected_answer as string
+            })));
+            multi.hSet(metaKey, {title: result.title}); // save title
 
             // update status
             await multi
@@ -434,7 +483,6 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     } catch (err: AxiosError | Error | any) {
         // if status is "CANCELLED"
         if (await checkCanceled()) return;
-
 
         // if attempts >= 5
         if (job.attemptsStarted >= (job.opts.attempts ?? 5)) {
@@ -473,7 +521,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
             }));
         }
 
-        logger.error(err.response.data);
+        logger.error(err);
         throw err;
     } finally {
         clearInterval(heartbeat);

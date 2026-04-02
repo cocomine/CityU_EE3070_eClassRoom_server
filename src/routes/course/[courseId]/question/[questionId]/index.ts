@@ -69,7 +69,7 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
                     ...meta,
                     visibility: parseInt(meta.visibility ?? "0")
                 },
-                question: result,
+                questions: result,
                 mark: null //TODO: student mark
             }
         });

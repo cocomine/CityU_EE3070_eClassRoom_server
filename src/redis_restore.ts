@@ -20,6 +20,8 @@ export interface SQLQuestions {
 
 export interface SQLQuestionsList {
     question: string;
+    key_points: string;
+    expected_answer: string;
 }
 
 export interface SQLFiles {
@@ -91,8 +93,12 @@ async function restoreQuestions() {
 
         // set result if DONE
         if (status === 1) {
-            const results = await DB.all<SQLQuestionsList[]>("SELECT question FROM questions_list WHERE question_ID = ? ORDER BY sub_ID", [ID]);
-            const resultList = results.map(r => r.question);
+            const results = await DB.all<SQLQuestionsList[]>("SELECT * FROM questions_list WHERE question_ID = ? ORDER BY sub_ID", [ID]);
+            const resultList = results.map(r => ({
+                question: r.question,
+                keypoint: JSON.parse(r.key_points),
+                expectedAnswer: r.expected_answer
+            }));
             redisMulti.json.set(resultKey, "$", resultList);
         }
         await redisMulti.exec();
