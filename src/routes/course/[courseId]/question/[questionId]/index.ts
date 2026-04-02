@@ -70,7 +70,6 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
                     visibility: parseInt(meta.visibility ?? "0")
                 },
                 questions: result,
-                mark: null //TODO: student mark
             }
         });
     } else {

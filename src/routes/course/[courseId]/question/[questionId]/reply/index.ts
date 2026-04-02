@@ -34,6 +34,17 @@ router.use(async (req, res, next) => {
 
 /*=======router======*/
 // path: /course/[courseId]/question/[questionId]/reply
+// GET: get all repled of the question
+router.get("/", async (req: CourseQuestionRequest, res) => {
+    const {courseId, questionId} = req.params;
+    const replyKey = `course:${courseId}:question:${questionId}:reply`;
+    const metaList = [];
+
+    //todo
+    //const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
+});
+
+// path: /course/[courseId]/question/[questionId]/reply
 // POST: student reply question
 router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     const eid = req.header("X-EID") as string;
@@ -41,6 +52,7 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     const {subQuestionId, clientTaskId, overwrite} = req.body;
     const content = xss(req.body?.content || "").trim();
     const resultKey = `course:${courseId}:question:${questionId}:result`;
+    const questionMetaKey = `course:${courseId}:question:${questionId}:meta`;
     const replyKey = `course:${courseId}:question:${questionId}:reply`;
     const studentKey = `student:${eid}:reply`;
 
@@ -71,7 +83,11 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         return res.status(404).json({code: 404, message: "Sub question not found"});
     }
 
-    // todo:check is public
+    // check is public
+    const visibility = await RedisClient.hGet(questionMetaKey, "visibility");
+    if (visibility === null || visibility === "0") {
+        return res.status(403).json({code: 403, message: "Question is not public, you can't reply."});
+    }
 
     // check Conflict
     if (!overwrite) {
@@ -84,7 +100,9 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
         }
     }
 
+    // Key
     let targetReplyId = crypto.randomUUID();
+    const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
 
     // Idempotency
     const idemKey = `idem:reply:${clientTaskId}`;
@@ -131,7 +149,6 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
                 await DB.run("DELETE FROM reply WHERE ID = ?", existingReply.ID);
             }
         }
-        const metaKey = `course:${courseId}:question:${questionId}:reply:${targetReplyId}:meta`;
 
         // insert new
         const stmt = await DB.prepare(
@@ -199,10 +216,5 @@ router.post("/", async (req: PostCourseQuestionReplyRequest, res) => {
     });
 });
 
-// path: /course/[courseId]/question/[questionId]/reply
-// GET: student get all repled of the question
-router.get("/", async (req, res) => {
-
-});
 
 module.exports = router;
