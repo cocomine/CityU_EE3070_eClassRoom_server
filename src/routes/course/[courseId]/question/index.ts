@@ -158,6 +158,10 @@ router.post("/", async (req: PostQuestionRequest, res) => {
     });
 });
 
+// path: /course/[courseId]/question/replied/*
+router.use("/replied", require("./replied"));
+logger.info("Loaded /course/[courseId]/question/replied");
+
 // path: /course/[courseId]/question/[questionId]/*
 router.use("/:questionId", require("./[questionId]"));
 logger.info("Loaded /course/[courseId]/question/[questionId]");

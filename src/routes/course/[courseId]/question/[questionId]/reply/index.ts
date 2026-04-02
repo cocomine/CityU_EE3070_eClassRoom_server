@@ -25,9 +25,10 @@ export interface GetCourseQuestionReplyQuery {
 const router = Router({mergeParams: true});
 const logger = getLogger("/course/[courseId]/question/[questionId]/reply");
 
+
 /*======middleware======*/
 // Check EID format in header, if not exist or invalid format return 400.
-const eidHeaderCheck: RequestHandler = (req, res, next) => {
+export const eidHeaderCheck: RequestHandler = (req, res, next) => {
     const eid = req.header("X-EID");
 
     if (!eid || !/^[0-9a-zA-Z]+$/.test(eid)) {
@@ -66,7 +67,7 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
             if (!t.includes(meta.status ?? "")) continue;
         }
 
-        metaList.push({...meta, score: parseInt(meta.score ?? ""), subQuestionId: parseInt(meta.subQuestionId ?? "")});
+        metaList.push({...meta, score: parseInt(meta.score ?? ""), subQuestionId: parseInt(meta.subQuestionId ?? "0")});
     }
 
     res.json({code: 200, message: "All reply meta get successfully.", data: metaList});
@@ -82,7 +83,7 @@ router.post("/", eidHeaderCheck, async (req: PostCourseQuestionReplyRequest, res
     const resultKey = `course:${courseId}:question:${questionId}:result`;
     const questionMetaKey = `course:${courseId}:question:${questionId}:meta`;
     const replyKey = `course:${courseId}:question:${questionId}:reply`;
-    const studentKey = `student:${eid}:reply`;
+    const studentKey = `course:${courseId}:student:${eid}:reply`;
 
     console.log(req.body);
     // validate input

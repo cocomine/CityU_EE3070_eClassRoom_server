@@ -189,6 +189,7 @@ async function restoreReply() {
         const metaKey = `course:${courseID}:question:${questionID}:reply:${ID}:meta`;
         const replyKey = `course:${courseID}:question:${questionID}:reply`;
         const resultKey = `course:${courseID}:question:${questionID}:reply:${ID}:result`;
+        const studentKey = `course:${courseID}:student:${EID}:reply`;
         const redisMulti = RedisClient.multi();
 
         // set meta
@@ -208,6 +209,7 @@ async function restoreReply() {
             updateAt: new Date().toISOString()
         });
         redisMulti.sAdd(replyKey, ID);
+        redisMulti.sAdd(studentKey, questionID);
 
         // set result if DONE
         if (status === 1) {
