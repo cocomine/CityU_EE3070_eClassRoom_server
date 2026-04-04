@@ -538,7 +538,7 @@ paths:
                   - replyId: 1440f78a-1786-4769-853e-5668b575fd4e
                     questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
                     courseId: 546644f3-9632-42b1-a916-79c1657f9938
-                    subQuestionId: "1"
+                    subQuestionId: 1
                     eid: aaa2
                     content: 學生作答內容...
                     status: DONE
@@ -617,6 +617,200 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /course/{courseId}/question/{questionId}/reply/{replyId}:
+    get:
+      tags: [ Replies ]
+      summary: Get reply marking result or current status
+      operationId: getQuestionReply
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+        - $ref: '#/components/parameters/ReplyIdPath'
+      responses:
+        '200':
+          description: Reply marking finished (DONE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyDoneResponse'
+              example:
+                code: 200
+                message: Reply 1440f78a-1786-4769-853e-5668b575fd4e is DONE.
+                data:
+                  meta:
+                    questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
+                    subQuestionId: 1
+                    finishedAt: 2026-04-04T08:30:06.732Z
+                    content: 在 Java 中，double 轉成 int 這種情況屬於縮小轉型...
+                    eid: aaa2
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    status: DONE
+                    score: 40
+                    updateAt: 2026-04-04T08:30:06.732Z
+                    createAt: 2026-04-04T08:30:06.732Z
+                    startAt: 2026-04-04T08:30:06.732Z
+                    replyId: 1440f78a-1786-4769-853e-5668b575fd4e
+                    errorMessage: ""
+                  result:
+                    score: 40
+                    understanding_level: partial
+                    key_point_feedback:
+                      - point: Distinguish primitive (e.g., `int`) vs. object (e.g., `String`) types.
+                        status: missing
+                        comment: The answer does not distinguish between primitive and object types.
+                    one_sentence_summary: The student understands explicit casting for narrowing conversion.
+                    next_step: Review widening conversion and compile-time error behavior.
+        '202':
+          description: Reply is still being marked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyNotReadyResponse'
+              example:
+                code: 202
+                message: Reply 1440f78a-1786-4769-853e-5668b575fd4e is not ready yet.
+                data:
+                  meta:
+                    questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
+                    subQuestionId: 1
+                    finishedAt: ""
+                    content: 在 Java 中，double 轉成 int...
+                    eid: aaa2
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    status: GENERATING
+                    score: null
+                    updateAt: 2026-04-04T09:05:07.326Z
+                    createAt: 2026-04-04T09:03:46.503Z
+                    startAt: 2026-04-04T09:05:07.326Z
+                    replyId: 1440f78a-1786-4769-853e-5668b575fd4e
+                    errorMessage: ""
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Reply not found in this question
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_in_question:
+                  value:
+                    code: 404
+                    message: No reply found in question 1440f78a-1786-4769-853e-5668b575fd40.
+                missing_meta:
+                  value:
+                    code: 404
+                    message: Reply 1440f78a-1786-4769-853e-5668b575fd4e not found.
+    patch:
+      tags: [ Replies ]
+      summary: Retry a reply marking task
+      operationId: retryQuestionReply
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+        - $ref: '#/components/parameters/ReplyIdPath'
+      responses:
+        '202':
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyRetryAcceptedResponse'
+              examples:
+                queued:
+                  value:
+                    code: 202
+                    message: Reply 1440f78a-1786-4769-853e-5668b575fd4e marking task queued for retry.
+                    data:
+                      status: PENDING
+                retrying:
+                  value:
+                    code: 202
+                    message: Reply 1440f78a-1786-4769-853e-5668b575fd4e marking task retrying.
+                    data:
+                      status: PENDING
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Reply not found in this question
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: 404
+                message: No reply found in question 1440f78a-1786-4769-853e-5668b575fd40.
+        '409':
+          description: Reply is still in PENDING/GENERATING and cannot be retried
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplyRetryConflictResponse'
+              example:
+                code: 409
+                message: Reply 1440f78a-1786-4769-853e-5668b575fd4e is currently GENERATING. Cannot retry.
+                data:
+                  meta:
+                    finishedAt: ""
+                    content: 在 Java 中，double 轉成 int 這種情況屬於縮小轉型...
+                    eid: aaa2
+                    courseId: 546644f3-9632-42b1-a916-79c1657f9938
+                    status: GENERATING
+                    score: null
+                    subQuestionId: 1
+                    updateAt: 2026-04-04T09:05:07.326Z
+                    createAt: 2026-04-04T09:03:46.503Z
+                    startAt: 2026-04-04T09:05:07.326Z
+                    replyId: 1440f78a-1786-4769-853e-5668b575fd4e
+                    errorMessage: ""
+                    questionId: 31341d78-bb6c-43a6-9851-be0392c882cd
+        '500':
+          description: Failed to reset data and retry marking
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: 500
+                message: Failed to retry marking.
+
+  /course/{courseId}/question/{questionId}/reply/{replyId}/stream:
+    get:
+      tags: [ Replies ]
+      summary: Stream reply status by SSE
+      description: |
+        Emits `event: status` with payload:
+        `{"replyId":"...","status":"PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE"}`.
+        When status is DONE, it may emit `event: delta` with marking result payload.
+      operationId: streamReplyStatus
+      parameters:
+        - $ref: '#/components/parameters/CourseIdPath'
+        - $ref: '#/components/parameters/QuestionIdPath'
+        - $ref: '#/components/parameters/ReplyIdPath'
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: status
+                data: {"replyId":"1440f78a-1786-4769-853e-5668b575fd4e","status":"PENDING"}
+
+                event: status
+                data: {"replyId":"1440f78a-1786-4769-853e-5668b575fd4e","status":"GENERATING"}
+
+                event: delta
+                data: {"score":40,"understanding_level":"partial","key_point_feedback":[{"point":"...","status":"full","comment":"..."}],"one_sentence_summary":"...","next_step":"..."}
+
+                event: status
+                data: {"replyId":"1440f78a-1786-4769-853e-5668b575fd4e","status":"DONE"}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /course/{courseId}/question/{questionId}/stream:
     get:
       tags: [ Questions ]
@@ -677,6 +871,14 @@ components:
       in: path
       required: true
       description: Question UUID
+      schema:
+        type: string
+        format: uuid
+    ReplyIdPath:
+      name: replyId
+      in: path
+      required: true
+      description: Reply UUID
       schema:
         type: string
         format: uuid
@@ -1108,7 +1310,8 @@ components:
           type: string
           format: uuid
         subQuestionId:
-          type: string
+          type: integer
+          minimum: 0
         eid:
           type: string
         content:
@@ -1249,6 +1452,106 @@ components:
             replyId:
               type: string
               format: uuid
+
+    ReplyKeyPointFeedbackItem:
+      type: object
+      additionalProperties: false
+      required: [ point, status, comment ]
+      properties:
+        point:
+          type: string
+        status:
+          type: string
+          enum: [ full, partial, missing ]
+        comment:
+          type: string
+
+    ReplyResult:
+      type: object
+      additionalProperties: false
+      required: [ score, understanding_level, key_point_feedback, one_sentence_summary, next_step ]
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        understanding_level:
+          type: string
+        key_point_feedback:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplyKeyPointFeedbackItem'
+        one_sentence_summary:
+          type: string
+        next_step:
+          type: string
+
+    ReplyDoneResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          required: [ meta, result ]
+          properties:
+            meta:
+              $ref: '#/components/schemas/ReplyMeta'
+            result:
+              $ref: '#/components/schemas/ReplyResult'
+
+    ReplyNotReadyResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+        data:
+          type: object
+          required: [ meta ]
+          properties:
+            meta:
+              $ref: '#/components/schemas/ReplyMeta'
+
+    ReplyRetryAcceptedResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 202
+        message:
+          type: string
+        data:
+          type: object
+          required: [ status ]
+          properties:
+            status:
+              type: string
+              enum: [ PENDING ]
+
+    ReplyRetryConflictResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 409
+        message:
+          type: string
+        data:
+          type: object
+          required: [ meta ]
+          properties:
+            meta:
+              $ref: '#/components/schemas/ReplyMeta'
 
     QuestionNotReadyResponse:
       type: object
