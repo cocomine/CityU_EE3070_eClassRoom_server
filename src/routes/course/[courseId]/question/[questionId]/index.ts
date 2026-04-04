@@ -170,10 +170,7 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
 router.delete("/", async (req: CourseQuestionRequest, res) => {
     const {courseId, questionId} = req.params;
     const metaKey = `course:${courseId}:question:${questionId}:meta`;
-    const resultKey = `course:${courseId}:question:${questionId}:result`;
     const questionKey = `course:${courseId}:question`;
-    const cancelKey = `course:${courseId}:question:${questionId}:cancel`;
-    const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
 
     // check status
     const status = await RedisClient.hGet(metaKey, "status");
@@ -205,13 +202,24 @@ router.delete("/", async (req: CourseQuestionRequest, res) => {
         }
 
         // delete redis
-        await RedisClient.multi()
-            .del(metaKey)
-            .del(resultKey)
-            .del(cancelKey)
-            .del(hbKey)
+        const multi = RedisClient.multi();
+        multi.del(metaKey)
             .sRem(questionKey, questionId)
-            .exec();
+
+        // delete reply in redis
+        const keysToDelete = await RedisClient.keys(`course:${courseId}:question:${questionId}*`);
+        if (keysToDelete.length > 0) {
+            multi.del(keysToDelete);
+        }
+
+        // remove question from all student replies
+        const studentReplyKeys = await RedisClient.keys(`course:${courseId}:student:*:reply`);
+        for (const key of studentReplyKeys) {
+            multi.sRem(key, questionId);
+        }
+
+        await multi.exec();
+
         await DB.exec("COMMIT");
     } catch (e) {
         await DB.exec("ROLLBACK");
