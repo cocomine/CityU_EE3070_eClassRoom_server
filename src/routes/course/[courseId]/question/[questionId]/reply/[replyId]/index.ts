@@ -38,10 +38,51 @@ router.use(async (req: CourseQuestionReplyRequest, res, next) => {
 
 /*=======router======*/
 // path: /course/[courseId]/question/[questionId]/reply/[replyId]
-// GET: Returns the final marking when DONE(200).
+// GET: Returns the final marking result when DONE(200).
 //      If task is not finished yet, returns 202 Accepted with current status (meta).
 router.get("/", async (req: CourseQuestionReplyRequest, res) => {
+    const {courseId, questionId, replyId} = req.params;
+    const metaKey = `course:${courseId}:question:${questionId}:reply:${replyId}:meta`;
+    const resultKey = `course:${courseId}:question:${questionId}:reply:${replyId}:result`;
 
+    // get meta
+    const meta = await RedisClient.hGetAll(metaKey);
+    if (!meta || !meta.status) {
+        return res.status(404).json({
+            code: 404,
+            message: `Reply ${replyId} not found.`
+        });
+    }
+
+    if (meta.status === "DONE") {
+        // finish, get result
+        const result = await RedisClient.json.get(resultKey);
+        return res.status(200).json({
+            code: 200,
+            message: `Reply ${replyId} is DONE.`,
+            data: {
+                meta: {
+                    ...meta,
+                    score: parseInt(meta.score ?? ""),
+                    subQuestionId: parseInt(meta.subQuestionId ?? "0")
+                },
+                result
+            }
+        });
+    } else {
+        // not finish, show meta
+        return res.status(202).json({
+            code: 202,
+            message: `Reply ${replyId} is not ready yet.`,
+            data: {
+                meta: {
+                    ...meta,
+                    score: parseInt(meta.score ?? ""),
+                    subQuestionId: parseInt(meta.subQuestionId ?? "0")
+                }
+            }
+        });
+    }
 });
 
 // path: /course/[courseId]/question/[questionId]/reply/[replyId]

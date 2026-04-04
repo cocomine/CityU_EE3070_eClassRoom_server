@@ -237,7 +237,7 @@ router.post("/", eidHeaderCheck, async (req: PostCourseQuestionReplyRequest, res
     }, {
         jobId: targetReplyId,
         removeOnComplete: true,
-        removeOnFail: true,
+        removeOnFail: false,
         attempts: 5,
         backoff: {
             type: "exponential",
