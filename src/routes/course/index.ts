@@ -40,7 +40,7 @@ router.post("/", async (req: Request<null, any, PostCourseBody | undefined>, res
 
     name = xss(name).trim(); // xss clean
     const courseId = crypto.randomUUID(); // Gen UUID
-    let digitId = Math.floor(Math.random() * 999999) + 1;//todo
+    let digitId = Math.floor(Math.random() * 999999) + 1;
     const digitIdStr = digitId.toString().padStart(6, "0");
 
     try {

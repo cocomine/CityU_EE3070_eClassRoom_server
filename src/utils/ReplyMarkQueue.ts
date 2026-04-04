@@ -362,7 +362,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT.replace("%Question%", questionPackage) + reply //todo
+                    text: USER_PROMPT.replace("%Question%", questionPackage) + reply
                 },
                 ...fileList
             ]
@@ -376,6 +376,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
             }
         });
+        //todo: tool_call
 
         if (await checkCanceled()) return;
         logger.debug(res.data);

@@ -12,4 +12,8 @@ router.get('/', (req, res) => {
     res.status(200).json({code: 200, message: "This is classroom environment data!"});
 });
 
+router.post("/", (req, res) => {
+    //todo
+    res.json({code: 200, message: "This is classroom environment data!"});
+});
 module.exports = router;
