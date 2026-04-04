@@ -1,13 +1,13 @@
 import {Router} from "express";
 import {getLogger} from "log4js";
-import {CourseQuestionRequest} from "./index";
-import {RedisClient} from "../../../../../redis_service";
-import {SET_STATUS_LUA_SCRIPT} from "../../../../../utils/LuaScript";
+import {CourseQuestionReplyRequest} from "./index";
+import {RedisClient} from "../../../../../../../redis_service";
+import {SET_STATUS_LUA_SCRIPT} from "../../../../../../../utils/LuaScript";
 
 const router = Router({mergeParams: true});
-const logger = getLogger("/course/[courseId]/question/stream");
+const logger = getLogger("/course/[courseId]/question/[questionId]/reply/[replyId]/stream");
 
-// path: /course/[courseId]/question/[questionId]/stream
+// path: /course/[courseId]/question/[questionId]/reply/[replyId]/stream
 /**
  * GET: SSE stream that emits ONLY status updates (no tokens/content).
  * On connect, server should immediately emit the current status, then future changes.
@@ -16,25 +16,26 @@ const logger = getLogger("/course/[courseId]/question/stream");
  * @code
  *   event: status,
  *   data: {
- *     "questionId":"...",
- *     "status":"PENDING|GENERATING|DONE|ERROR|CANCELLED|STALE",
+ *     "replyId":"...",
+ *     "status":"PENDING|MARKING|DONE|ERROR|CANCELLED|STALE",
  *     "resultUrl": "...optional..."
  *   }
  *
  * After DONE/ERROR/CANCELLED/STALE, server may close the stream.
  * If status is DONE/ERROR/CANCELLED/STALE
  */
-router.get("/", async (req: CourseQuestionRequest, res) => {
-    const {courseId, questionId} = req.params;
-    const metaKey = `course:${courseId}:question:${questionId}:meta`;
-    const hbKey = `course:${courseId}:question:${questionId}:heartbeat`;
-    const channelKey = `course:${courseId}:question:${questionId}:status`;
-    logger.info(`Client connected to question ${questionId} status stream`);
+router.get("/", async (req: CourseQuestionReplyRequest, res) => {
+    const {courseId, questionId, replyId} = req.params;
+    const metaKey = `course:${courseId}:question:${questionId}:reply:${replyId}:meta`;
+    const hbKey = `course:${courseId}:question:${questionId}:reply:${replyId}:heartbeat`;
+    const channelKey = `course:${courseId}:question:${questionId}:reply:${replyId}:status`;
+    const resultKey = `course:${courseId}:question:${questionId}:reply:${replyId}:result`;
+    logger.info(`Client connected to reply ${replyId} status stream`);
 
     // push status to client
     const send = (status: string) => {
         res.write(`event: status\n`);
-        res.write(`data: ${JSON.stringify({questionId, status})}\n\n`);
+        res.write(`data: ${JSON.stringify({replyId, status})}\n\n`);
     };
 
     // Send header
@@ -47,12 +48,12 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
     // immediate send current status
     const terminal = new Set(["DONE", "ERROR", "CANCELLED", "STALE"]);
     const current = (await RedisClient.hGet(metaKey, "status")) ?? "PENDING";
-    const title = (await RedisClient.hGet(metaKey, "title")) ?? "New Question (" + questionId.slice(0, 8) + ")";
 
-    // if status = DONE, send title
+    // if status = DONE, send result
     if (current === "DONE") {
+        const result = await RedisClient.json.get(resultKey, {path: "$"});
         res.write(`event: delta\n`);
-        res.write(`data: ${JSON.stringify({questionId, title})}\n\n`);
+        res.write(`data: ${JSON.stringify(result)}\n\n`);
     }
     send(current);
 
@@ -106,10 +107,10 @@ router.get("/", async (req: CourseQuestionRequest, res) => {
             const data = JSON.parse(msg);
             status = data.status ?? status;
 
-            // if done send title
-            if (status === "DONE" && data.title) {
+            // if done send score
+            if (status === "DONE" && data.result) {
                 res.write(`event: delta\n`);
-                res.write(`data: ${JSON.stringify({questionId, title: data.title})}\n\n`);
+                res.write(`data: ${JSON.stringify(data.result)}\n\n`);
             }
         } catch {
         }

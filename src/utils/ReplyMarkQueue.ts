@@ -466,7 +466,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 })
                 .publish(channelKey, JSON.stringify({ // pub/sub: publish status to channel
                     status: "DONE",
-                    ...validResult
+                    result: validResult
                 }))
                 .exec();
             await DB.exec("COMMIT");

@@ -186,5 +186,9 @@ router.patch("/", async (req: CourseQuestionReplyRequest, res) => {
     });
 });
 
+// path: /course/[courseId]/question/[questionId]/reply/[replyId]/stream/*
+router.use("/stream", require("./stream"));
+logger.info("Loaded /course/[courseId]/question/[questionId]/reply/[replyId]/stream");
+
 
 module.exports = router;
