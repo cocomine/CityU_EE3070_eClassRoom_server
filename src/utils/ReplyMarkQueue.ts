@@ -516,9 +516,8 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             }));
         }
 
-        logger.error(err.response.data);
+        logger.error(err);
         throw err;
-
     } finally {
         clearInterval(heartbeat);
     }
@@ -554,6 +553,3 @@ MarkingTaskQueueEvents.on("added", (job) => {
 });
 
 export {MarkingTaskQueue, MarkingTaskQueueEvents, shutdownMarkingTaskQueue};
-;
-;
-;
