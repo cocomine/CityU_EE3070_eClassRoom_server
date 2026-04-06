@@ -126,7 +126,7 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
         try {
             await DB.exec("BEGIN");
             await DB.run("UPDATE questions SET visibility = 1 WHERE ID = ? AND visibility = 0;", [questionId]);
-            await RedisClient.hSet(metaKey, {visibility});
+            await RedisClient.hSet(metaKey, {visibility: 1});
             await DB.exec("COMMIT");
         } catch (error) {
             await DB.exec("ROLLBACK");
@@ -145,7 +145,7 @@ router.put("/", async (req: PutCourseQuestionRequest, res) => {
         try {
             await DB.exec("BEGIN");
             await DB.run("UPDATE questions SET visibility = 0 WHERE ID = ? AND visibility = 1;", [questionId]);
-            await RedisClient.hSet(metaKey, {visibility});
+            await RedisClient.hSet(metaKey, {visibility: 0});
             await DB.exec("COMMIT");
         } catch (error) {
             await DB.exec("ROLLBACK");
