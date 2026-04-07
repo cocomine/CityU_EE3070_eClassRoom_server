@@ -169,11 +169,11 @@ router.patch("/", async (req: CourseQuestionReplyRequest, res) => {
 
     // Add a new job if it doesn't exist or isn't retriable directly
     await MarkingTaskQueue.add("MarkingTaskQueue", {
-        questionId: meta.questionId,
-        courseId: meta.courseId,
+        questionId: questionId,
+        courseId: courseId,
         subQuestionId: parseInt(meta.subQuestionId ?? "0"),
         reply: meta.content,
-        replyId: meta.replyId
+        replyId: replyId
     }, {
         jobId: replyId,
         removeOnComplete: true,

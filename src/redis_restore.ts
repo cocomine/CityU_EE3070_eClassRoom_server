@@ -51,6 +51,7 @@ export interface SQLReply {
     next_step: string | null;
     understanding_level: "none" | "low" | "partial" | "good" | "excellent";
     courseID: string;
+    create_datetime: string;
 }
 
 export interface SQLReplyKeyPoint {
@@ -171,8 +172,8 @@ async function restoreFiles() {
 }
 
 async function restoreReply() {
-    const replys = await DB.all<SQLReply[]>("SELECT reply.*, questions.courseID FROM reply, questions WHERE reply.questionID = questions.ID ORDER BY reply.subQuestionID");
-    for (let reply of replys) {
+    const replies = await DB.all<SQLReply[]>("SELECT reply.*, questions.courseID FROM reply, questions WHERE reply.questionID = questions.ID ORDER BY reply.subQuestionID");
+    for (let reply of replies) {
         const {
             ID,
             questionID,
@@ -184,7 +185,8 @@ async function restoreReply() {
             understanding_level,
             next_step,
             summary,
-            courseID
+            courseID,
+            create_datetime
         } = reply;
         const metaKey = `course:${courseID}:question:${questionID}:reply:${ID}:meta`;
         const replyKey = `course:${courseID}:question:${questionID}:reply`;
@@ -202,7 +204,7 @@ async function restoreReply() {
             eid: EID,
             status: ["PENDING", "DONE", "ERROR", "CANCELLED"].at(status) ?? "ERROR", // 0 = PENDING, 1 = DONE, 2 = ERROR, 3 = CANCELLED,
             score: score ?? "", // 0-100 score
-            createAt: new Date().toISOString(),
+            createAt: new Date(create_datetime + "Z").toISOString(),
             startAt: status === 1 ? new Date().toISOString() : "",
             finishedAt: status === 1 ? new Date().toISOString() : "",
             errorMessage: "",

@@ -156,7 +156,7 @@ router.post("/", eidHeaderCheck, async (req: PostCourseQuestionReplyRequest, res
 
         // check for existing record and handle overwrite
         if (overwrite) {
-            const existingReply = await DB.get("SELECT ID FROM reply WHERE questionID = ? AND subQuestionID = ? AND EID = ?", [questionId, subQuestionId, eid]);
+            const existingReply = await DB.get("SELECT ID FROM reply WHERE questionID = ? AND EID = ?", [questionId, eid]);
             if (existingReply) {
                 // cancel old job if exist
                 const job = await MarkingTaskQueue.getJob(existingReply.ID);

@@ -174,8 +174,6 @@ MATERIAL:
 
 QUESTION PACKAGE (authoritative):
 %Question%
-
-STUDENT ANSWER:
 `;
 const RESPONSE_FORMAT = {
     type: "json_schema",
@@ -362,10 +360,13 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             content: [
                 {
                     type: "text",
-                    text: USER_PROMPT.replace("%Question%", questionPackage) + reply
+                    text: USER_PROMPT.replace("%Question%", questionPackage)
                 },
                 ...fileList
             ]
+        }, {
+            role: "user",
+            content: "STUDENT ANSWER:\n" + reply
         }]
     };
 
@@ -501,8 +502,8 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
             }));
 
             // update DB
-            const stmt = await DB.prepare("UPDATE questions SET status = 2 WHERE id = ? AND status != 3");
-            await stmt.bind(questionId);
+            const stmt = await DB.prepare("UPDATE reply SET status = 2 WHERE id = ? AND status != 3");
+            await stmt.bind(replyId);
             await stmt.run();
         } else {
             // attempts < 5
