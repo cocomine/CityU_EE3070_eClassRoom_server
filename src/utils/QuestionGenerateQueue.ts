@@ -71,7 +71,7 @@ export type ChatMessageContent =
     | ChatMessageContentItemText;
 
 /* ===== OpenRouterChatCompletionResponse Type ===== */
-interface OpenRouterChatCompletionResponse {
+export interface OpenRouterChatCompletionResponse {
     id: string;
     object: "chat.completion";
     created: number;
@@ -224,7 +224,7 @@ const RESPONSE_FORMAT = {
                             "expected_answer": {
                                 "type": "string",
                                 "minLength": 1,
-                                "description": "What a correct student answer should roughly include. Markdown not support."
+                                "description": "What a correct student answer should roughly include. Markdown not support!"
                             },
                             "key_points": {
                                 "type": "array",
@@ -234,12 +234,12 @@ const RESPONSE_FORMAT = {
                                     "type": "string",
                                     "minLength": 1
                                 },
-                                "description": "Key grading points. Prefer 3-6 concise bullet-like items. Markdown not support."
+                                "description": "Key grading points. Prefer 3-6 concise bullet-like items. Markdown not support!"
                             },
                             "misconception_tag": {
                                 "type": "string",
                                 "minLength": 1,
-                                "description": "Short tag for a major misconception (e.g. 'CHECKED_VS_UNCHECKED_CONFUSION'). Markdown not support."
+                                "description": "Short tag for a major misconception (e.g. 'CHECKED_VS_UNCHECKED_CONFUSION'). Markdown not support!"
                             }
                         }
                     }
@@ -248,6 +248,7 @@ const RESPONSE_FORMAT = {
         }
     }
 };
+const LLM_MODEL = process.env.LLM_MODEL || "google/gemini-2.5-flash-lite";
 
 // S3 Config
 export const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL;
@@ -366,7 +367,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
     // call LLM
     let result: GeneratedQuestionSet;
     const requestBody = {
-        model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
+        model: LLM_MODEL,
         stream: false,
         temperature: 0.5,
         session_id: courseId,

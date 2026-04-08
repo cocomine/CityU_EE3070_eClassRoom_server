@@ -4,6 +4,8 @@ import {getLogger} from "log4js";
 import {DB} from "../sql_service";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {
+    ChatMessageContent,
+    OpenRouterChatCompletionResponse,
     S3_ACCESS_KEY_ID,
     S3_ENDPOINT,
     S3_PUBLIC_URL,
@@ -73,76 +75,6 @@ export interface ChatMessageContentItemText {
     }
 }
 
-export type ChatMessageContent =
-    string
-    | ChatMessageContentItemImage
-    | ChatMessageContentItemFile
-    | ChatMessageContentItemText;
-
-/* ===== OpenRouterChatCompletionResponse Type ===== */
-interface OpenRouterChatCompletionResponse {
-    id: string;
-    object: "chat.completion";
-    created: number;
-    model: string;
-    provider?: string;
-    system_fingerprint?: string | null;
-    choices: OpenRouterChoice[];
-    usage: OpenRouterUsage | null;
-}
-
-interface OpenRouterChoice {
-    index: number;
-    logprobs: unknown | null;
-    finish_reason: "tool_calls" | "stop" | "length" | "content_filter" | "error" | string;
-    native_finish_reason?: string | null;
-    message: OpenRouterMessage;
-}
-
-interface OpenRouterMessage {
-    role: "assistant";
-    content: string | null;
-    refusal: string | null;
-    reasoning: string | null;
-    reasoning_details?: (OpenRouterReasoningTextDetail | OpenRouterReasoningSummaryDetail | OpenRouterReasoningEncryptedDetail)[] | null;
-}
-
-interface OpenRouterReasoningTextDetail {
-    type: "reasoning.text";
-    text: string | null;
-    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
-    index: number | null;
-}
-
-interface OpenRouterReasoningSummaryDetail {
-    type: "reasoning.summary";
-    summary: string;
-    id: string | null;
-    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
-    index: number | null;
-}
-
-interface OpenRouterReasoningEncryptedDetail {
-    type: "reasoning.encrypted";
-    data: string;
-    id: string | null;
-    format: "unknown" | "openai-responses-v1" | "azure-openai-responses-v1" | "xai-responses-v1" | "anthropic-claude-v1" | "google-gemini-v1" | null;
-    index: number | null;
-}
-
-interface OpenRouterUsage {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    cost?: number;
-    is_byok?: boolean;
-    prompt_tokens_details?: Record<string, number>;
-    cost_details?: Record<string, number>;
-    completion_tokens_details?: Record<string, number>;
-}
-
-/* ===== penRouterChatCompletionResponse Type End ===== */
-
 export interface SqlQuestionListRow {
     question: string,
     expected_answer: string,
@@ -206,6 +138,7 @@ const RESPONSE_FORMAT = {
         }
     }
 };
+const LLM_MODEL = process.env.LLM_MODEL || "google/gemini-2.5-flash-lite";
 
 // Check not undefined
 if (!S3_SECRET_ACCESS_KEY || !S3_PUBLIC_URL || !S3_ACCESS_KEY_ID || !S3_ENDPOINT) {
@@ -332,7 +265,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
     // call LLM
     let result: MarkedReplySet;
     const requestBody = {
-        model: /*"google/gemini-2.5-flash"*/ "google/gemini-2.5-flash-lite",
+        model: LLM_MODEL,
         stream: false,
         temperature: 0.2,
         session_id: courseId,
@@ -470,7 +403,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                     status: "DONE",
                     result: validResult
                 }))
-                .exec();
+                .exec()
             await DB.exec("COMMIT");
         } catch (err) {
             await DB.exec("ROLLBACK");
