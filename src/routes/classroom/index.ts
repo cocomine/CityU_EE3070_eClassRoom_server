@@ -28,14 +28,26 @@ interface ClassroomPostBody {
 
 const router = Router();
 const logger = getLogger("/classroom");
+const CLASSROOM_CACHE_KEY = "classroom";
 
 
 /*=======router======*/
 // path: /classroom
 // GET: show classroom environment data
-router.get("/", (req, res) => {
-    //todo
-    res.status(200).json({code: 200, message: "This is classroom environment data!"});
+router.get("/", async (req, res) => {
+    try {
+        // If cache does not exist, return 204 with empty body.
+        if (await RedisClient.exists(CLASSROOM_CACHE_KEY) === 0) {
+            return res.status(204).send();
+        }
+
+        // Cache exists, return cached classroom payload.
+        const cachedData = await RedisClient.json.get(CLASSROOM_CACHE_KEY);
+        return res.status(200).json({code: 200, message: "Successfully get data", data: cachedData});
+    } catch (err) {
+        logger.error(err);
+        return res.status(500).json({code: 500, message: "Failed to get classroom data"});
+    }
 });
 
 // path: /classroom
@@ -73,7 +85,7 @@ router.post("/", async (req, res) => {
 
     // save redis
     try {
-        await RedisClient.json.set("classroom:latest", "$", payload);
+        await RedisClient.json.set(CLASSROOM_CACHE_KEY, "$", payload);
         return res.status(200).json({code: 200, message: "Classroom data updated"});
     } catch (err) {
         logger.error(err);
