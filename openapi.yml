@@ -52,18 +52,99 @@ paths:
   /classroom:
     get:
       tags: [ Classroom ]
-      summary: Get classroom environment data
+      summary: Get cached classroom telemetry
       operationId: getClassroom
       responses:
         '200':
-          description: Classroom data placeholder
+          description: Cached classroom data retrieved
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClassroomResponse'
+                $ref: '#/components/schemas/ClassroomGetResponse'
               example:
                 code: 200
-                message: This is classroom environment data!
+                message: Successfully get data
+                data:
+                  timestamp: "2026-04-09T18:10:28.967334982Z"
+                  environment:
+                    brightness: 420
+                    temperature: 25.63
+                    humidity: 68
+                    co2: 930
+                  studentStatus:
+                    - attention: 20
+                      stress: 51.96
+                      label: A
+                    - label: 1
+                    - label: 3
+        '204':
+          description: No classroom data cached yet
+        '500':
+          description: Failed to get classroom data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: 500
+                message: Failed to get classroom data
+    post:
+      tags: [ Classroom ]
+      summary: Update cached classroom telemetry
+      operationId: updateClassroom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassroomPostRequest'
+            example:
+              device: esp32-a
+              timestamp: "2026-04-09T18:10:28.967334982Z"
+              seq: 88
+              environment_valid: true
+              crc_ok: true
+              environment:
+                brightness: 420
+                temperature_c: 25.63
+                water: 68
+                co2: 930
+              learning_state:
+                - attention: 20
+                  stress: 51.96
+                  label: A
+                - { }
+                - label: 3
+      responses:
+        '200':
+          description: Classroom data saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassroomUpdateResponse'
+              example:
+                code: 200
+                message: Classroom data updated
+        '204':
+          description: Payload ignored because `environment_valid` is false
+        '400':
+          description: Invalid request body type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: 400
+                message: Invalid request body type
+        '500':
+          description: Failed to update classroom data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: 500
+                message: Failed to update classroom data
 
   /course:
     get:
@@ -996,14 +1077,115 @@ components:
           type: string
           example: pong
 
-    ClassroomResponse:
+    ClassroomEnvironmentCache:
+      type: object
+      required: [ brightness, temperature, humidity, co2 ]
+      properties:
+        brightness:
+          type: number
+        temperature:
+          type: number
+        humidity:
+          type: number
+        co2:
+          type: number
+
+    ClassroomStudentStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        attention:
+          type: number
+        stress:
+          type: number
+        label:
+          oneOf:
+            - type: string
+            - type: number
+
+    ClassroomCacheData:
+      type: object
+      required: [ timestamp, environment, studentStatus ]
+      properties:
+        timestamp:
+          type: string
+        environment:
+          $ref: '#/components/schemas/ClassroomEnvironmentCache'
+        studentStatus:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClassroomStudentStatus'
+
+    ClassroomGetResponse:
+      type: object
+      required: [ code, message, data ]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Successfully get data
+        data:
+          $ref: '#/components/schemas/ClassroomCacheData'
+
+    ClassroomUpdateResponse:
       type: object
       required: [ code, message ]
       properties:
         code:
           type: integer
+          example: 200
         message:
           type: string
+          example: Classroom data updated
+
+    ClassroomPostEnvironment:
+      type: object
+      required: [ brightness, temperature_c, water, co2 ]
+      properties:
+        brightness:
+          type: number
+        temperature_c:
+          type: number
+        water:
+          type: number
+        co2:
+          type: number
+
+    ClassroomPostLearningState:
+      type: object
+      additionalProperties: false
+      properties:
+        attention:
+          type: number
+        stress:
+          type: number
+        label:
+          oneOf:
+            - type: string
+            - type: number
+
+    ClassroomPostRequest:
+      type: object
+      required: [ device, timestamp, environment_valid, environment, learning_state ]
+      properties:
+        device:
+          type: string
+        timestamp:
+          type: string
+        seq:
+          type: integer
+        environment_valid:
+          type: boolean
+        crc_ok:
+          type: boolean
+        environment:
+          $ref: '#/components/schemas/ClassroomPostEnvironment'
+        learning_state:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClassroomPostLearningState'
 
     CourseItem:
       type: object

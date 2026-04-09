@@ -13,11 +13,12 @@ interface ClassroomEnvironment {
 interface ClassroomLearningState {
     attention?: number;
     stress?: number;
+    label?: string | number;
 }
 
 interface ClassroomPostBody {
     device: string;
-    timestamp: number;
+    timestamp: string;
     seq?: number;
     environment_valid: boolean;
     crc_ok?: boolean;
@@ -65,10 +66,11 @@ router.post("/", async (req, res) => {
 
     // Build a RedisJSON-compatible object explicitly to satisfy strict TS typing.
     // Keep empty learning_state objects as {} in Redis.
-    const normalizedLearningState = req.body.learning_state.map((state) => {
-        const item: Record<string, number> = {};
+    const normalizedLearningState = req.body.learning_state.map((state, index) => {
+        const item: Record<string, number | string> = {};
         if (state.attention !== undefined) item.attention = state.attention;
         if (state.stress !== undefined) item.stress = state.stress;
+        item.label = state.label ? state.label : index + 1; // Add label to identify each student's state in Redis
         return item;
     });
 
@@ -76,11 +78,11 @@ router.post("/", async (req, res) => {
         timestamp: req.body.timestamp,
         environment: {
             brightness: req.body.environment.brightness,
-            temperature_c: req.body.environment.temperature_c,
-            water: req.body.environment.water,
+            temperature: req.body.environment.temperature_c,
+            humidity: req.body.environment.water,
             co2: req.body.environment.co2
         },
-        learning_state: normalizedLearningState
+        studentStatus: normalizedLearningState
     };
 
     // save redis
@@ -140,7 +142,8 @@ function isClassroomLearningState(value: unknown): value is ClassroomLearningSta
 
     // Allow {}. If fields exist, they must be finite numbers.
     return (value.attention === undefined || isFiniteNumber(value.attention))
-        && (value.stress === undefined || isFiniteNumber(value.stress));
+        && (value.stress === undefined || isFiniteNumber(value.stress))
+        && (value.label === undefined || isFiniteNumber(value.label) || typeof value.label === "string");
 }
 
 /**
@@ -153,7 +156,7 @@ function isClassroomPostBody(value: unknown): value is ClassroomPostBody {
     if (!isObjectRecord(value)) return false;
 
     return typeof value.device === "string"
-        && isFiniteNumber(value.timestamp)
+        && typeof value.timestamp === "string"
         && (value.seq === undefined || Number.isInteger(value.seq))
         && typeof value.environment_valid === "boolean"
         && (value.crc_ok === undefined || typeof value.crc_ok === "boolean")
