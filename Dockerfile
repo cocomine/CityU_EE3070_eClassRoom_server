@@ -16,7 +16,7 @@ ENV S3_SECRET_ACCESS_KEY=""
 ENV S3_PUBLIC_URL=""
 ENV LLM_MODEL="openai/gpt-5-mini"
 
-COPY package.json yarn.lock .yarnrc.yml ./
+COPY package.json yarn.lock .yarnrc.yml database.db ./
 RUN corepack enable
 RUN yarn install
 COPY /dist ./
