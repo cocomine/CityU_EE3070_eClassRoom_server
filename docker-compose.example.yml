@@ -27,7 +27,3 @@ services:
 networks:
   apiNet:
     driver: bridge
-
-volumes:
-  redis-data:
-    driver: local
