@@ -78,7 +78,7 @@ export interface OpenRouterChatCompletionResponse {
     model: string;
     provider?: string;
     system_fingerprint?: string | null;
-    choices: OpenRouterChoice[];
+    choices?: OpenRouterChoice[];
     usage: OpenRouterUsage | null;
 }
 
@@ -90,12 +90,20 @@ interface OpenRouterChoice {
     message: OpenRouterMessage;
 }
 
-interface OpenRouterMessage {
+export interface OpenRouterMessage {
     role: "assistant";
     content: string | null;
     refusal: string | null;
     reasoning: string | null;
     reasoning_details?: (OpenRouterReasoningTextDetail | OpenRouterReasoningSummaryDetail | OpenRouterReasoningEncryptedDetail)[] | null;
+    tool_calls?: {
+        function: {
+            arguments: string;
+            name: string;
+        },
+        id: string;
+        type: "function";
+    }[] | null;
 }
 
 interface OpenRouterReasoningTextDetail {
@@ -410,7 +418,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         logger.debug(res.data);
 
         // filter result
-        const choice = res.data.choices.find(choice => choice.message.role === "assistant");
+        const choice = res.data?.choices?.find(choice => choice.message.role === "assistant");
         const content = choice?.message?.content;
         if (typeof content !== "string") {
             throw new Error("OpenRouter response is missing choices.message.content");

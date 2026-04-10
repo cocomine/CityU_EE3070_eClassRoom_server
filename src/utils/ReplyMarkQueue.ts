@@ -87,6 +87,12 @@ export interface SqlQuestionListRow {
 const USER_PROMPT = `
 TASK: Grade the student answer and estimate understanding (0–100).
 
+MATERIAL:
+- All materials have been placed in the files.
+
+QUESTION PACKAGE (authoritative):
+%Question%
+
 SCORING RUBRIC (apply exactly):
 - Start at 0.
 - For each key point:
@@ -97,15 +103,20 @@ SCORING RUBRIC (apply exactly):
 - Major misconception penalty: -0 to -25 (if the misconception_tag appears)
 - Cap final score to [0, 100].
 
+OUTPUT FORMAT (JSON only):
+{
+  "score": 0-100,
+  "understanding_level": "none|low|partial|good|excellent",
+  "key_point_feedback": [
+    {"point":"...","status":"full|partial|missing","comment":"..."}
+  ],
+  "one_sentence_summary": "...",
+  "next_step": "..."
+}
+
 IMPORTANT:
 - If the student answer includes content not in LESSON EXCERPT, do not reward it.
 - Do not be harsh on grammar. Judge meaning.
-
-MATERIAL:
-- All materials have been placed in the files.
-
-QUESTION PACKAGE (authoritative):
-%Question%
 `;
 const RESPONSE_FORMAT = {
     type: "json_schema",
@@ -263,7 +274,6 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
     `;
 
     // call LLM
-    let result: MarkedReplySet;
     const requestBody = {
         model: LLM_MODEL,
         stream: false,
@@ -282,6 +292,31 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 engine: "native",
             },
         }],
+        tools: [
+            {
+                type: "openrouter:datetime",
+                parameters: {
+                    timezone: "Asia/Hong_Kong"
+                }
+            }, {
+                type: "function",
+                function: {
+                    name: "add",
+                    description: "Add two numbers and return the sum.",
+                    parameters: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                            a: {type: "number"},
+                            b: {type: "number"}
+                        },
+                        required: ["a", "b"]
+                    }
+                }
+            }
+        ],
+        tool_choice: "auto",
+        parallel_tool_calls: true,
         messages: [{
             role: "system",
             content: SYSTEM_PROMPT
@@ -300,37 +335,99 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         }, {
             role: "user",
             content: "STUDENT ANSWER:\n" + reply
-        }]
+        }] as any[]
     };
 
-    try {
-        const res = await axios.post<OpenRouterChatCompletionResponse>("https://nginx-253730240080.us-central1.run.app/chat/completions", requestBody, {
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
+    // Create an Axios client instance with default headers
+    const client = axios.create({
+        baseURL: "https://openrouter.ai/api/v1", //"https://nginx-253730240080.us-central1.run.app",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
+            "X-Title": "ee3070",
+        },
+    });
+
+    /*Because the model may call tools and generate intermediate content before the final answer,
+    we loop up to 10 times to get the final answer (finish_reason === "stop" or "length").
+    In each loop, we check if there are tool_calls in the response.
+    If yes, we execute the tool calls and push the tool results back to the model, then continue to the next loop.
+    If no tool_calls, we check finish_reason to determine if it's a normal completion or an error/filtered/length-truncated case.*/
+    const runChat = async () => {
+        for (let step = 1; step <= 10; step++) {
+            try {
+                logger.info("Starting chat round " + step);
+                const res = await client.post<OpenRouterChatCompletionResponse | undefined>("/chat/completions", requestBody);
+
+                // check cancel
+                if (await checkCanceled()) return null;
+                logger.debug(res.data);
+
+                // filter result
+                const choice = res.data?.choices?.[0];
+                if (!choice) throw new Error("No choices in response");
+
+                const finishReason: string = choice.finish_reason;
+                const msg = choice.message;
+                logger.debug(msg);
+
+                // tool call
+                const toolCalls = msg.tool_calls ?? [];
+                if (toolCalls.length > 0) {
+                    requestBody.messages.push(msg); // push to history
+
+                    // Execute each tool call, and then return the result using role=tool.
+                    for (const tc of toolCalls) {
+                        const toolName = tc.function?.name;
+                        const rawArgs = tc.function?.arguments;
+
+                        let args: any;
+                        try {
+                            args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+
+                            const toolOutput = runTool(toolName, args);
+                            requestBody.messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: toolOutput,
+                            });
+                        } catch (e) {
+                            requestBody.messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: `Tool args JSON parse failed: ${rawArgs}`,
+                            });
+                        }
+                    }
+                    // Continue to the next round, letting the model use the tool result to generate the final answer.
+                    continue;
+                }
+
+                // No tool_calls => This means the output has ended (or has been truncated/filtered).
+                if (finishReason === "error") {
+                    throw new Error("OpenRouter response error: " + msg.content);
+                }
+                if (finishReason === "content_filter") {
+                    throw new Error("OpenRouter response is filtered by content filter: " + msg.content);
+                }
+                if (finishReason === "length") {
+                    throw new Error("Model output truncated (finish_reason=length):" + msg.content);
+                }
+
+                // Normal situation: stop (complete)
+                return msg.content;
+            } catch (err) {
+                logger.error(`Round ${step} - Failed to get valid response from OpenRouter:`, err);
             }
-        });
-        //todo: tool_call
-
-        if (await checkCanceled()) return;
-        logger.debug(res.data);
-
-        // filter result
-        const choice = res.data.choices.find(choice => choice.message.role === "assistant");
-        const content = choice?.message?.content;
-        if (typeof content !== "string") {
-            throw new Error("OpenRouter response is missing choices.message.content");
         }
-        if (choice?.finish_reason === "error") {
-            throw new Error("OpenRouter response error: " + content);
-        }
-        if (choice?.finish_reason === "content_filter") {
-            throw new Error("OpenRouter response is filtered by content filter: " + content);
-        }
-        logger.debug(content);
+        throw new Error("Failed to get valid response from OpenRouter.");
+    }
 
+    try {
         // get result
-        result = JSON.parse(xss(content));
+        const content = await runChat();
+        if (!content) return;
+        const result: MarkedReplySet = JSON.parse(xss(content));
 
         //check output
         if (result.score === undefined || !result.understanding_level || !result.key_point_feedback || !result.next_step || !result.one_sentence_summary) {
@@ -403,7 +500,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                     status: "DONE",
                     result: validResult
                 }))
-                .exec()
+                .exec();
             await DB.exec("COMMIT");
         } catch (err) {
             await DB.exec("ROLLBACK");
@@ -457,6 +554,24 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
         clearInterval(heartbeat);
     }
 }, {connection, concurrency: 2});
+
+/**
+ *
+ * @param name
+ * @param args
+ */
+function runTool(name: string, args: any): string {
+    logger.info(`Running tool for ${name}: `, args);
+    if (name === "add") {
+        const a = Number(args.a);
+        const b = Number(args.b);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) {
+            throw new Error(`Invalid args for add: ${JSON.stringify(args)}`);
+        }
+        return JSON.stringify({result: a + b});
+    }
+    throw new Error(`Unknown tool: ${name}`);
+}
 
 /**
  * Shutdown the MarkingTaskQueue gracefully.
