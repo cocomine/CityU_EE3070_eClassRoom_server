@@ -241,7 +241,6 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
                 ContentType: row.mime,
             }),
         );
-        console.debug(response);
 
         if (row.mime.includes("image/")) {
             // image file
@@ -340,7 +339,7 @@ const MarkingTaskQueueWorker = new Worker<MarkingJobDate>("MarkingTaskQueue", as
 
     // Create an Axios client instance with default headers
     const client = axios.create({
-        baseURL: "https://openrouter.ai/api/v1", //"https://nginx-253730240080.us-central1.run.app",
+        baseURL: process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1",
         headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
