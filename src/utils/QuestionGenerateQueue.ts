@@ -374,6 +374,13 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
 
     // call LLM
     let result: GeneratedQuestionSet;
+    const client = axios.create({
+        baseURL: process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
+        }
+    })
     const requestBody = {
         model: LLM_MODEL,
         stream: false,
@@ -407,12 +414,7 @@ const GenerateTaskQueueWorker = new Worker<QuestionGenerateJobDate>("QuestionGen
         }]
     };
     try {
-        const res = await axios.post<OpenRouterChatCompletionResponse>(process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1", requestBody, {
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`
-            }
-        });
+        const res = await client.post<OpenRouterChatCompletionResponse>("/chat/completions", requestBody);
 
         if (await checkCanceled()) return;
         logger.debug(res.data);
